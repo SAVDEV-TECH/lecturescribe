@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function StudyDeck({ note }) {
+  const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
 
@@ -16,17 +17,23 @@ export default function StudyDeck({ note }) {
   const [inputMessage, setInputMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
 
-  if (!note) {
-    return (
-      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-        Select a session to access review flashcards and the lecture assistant.
-      </div>
-    );
+  // Reset study deck & chat state when switching to a different lecture note
+  if (note?.id !== trackedNoteId) {
+    setTrackedNoteId(note?.id);
+    setCurrentCardIndex(0);
+    setIsFlipped(false);
+    setInputMessage('');
+    setMessages([
+      {
+        sender: 'assistant',
+        text: `Welcome. I am ready to answer questions about "${note?.title || 'this session'}", generate practice prompts, or clarify terminology.`
+      }
+    ]);
   }
 
   // Build flashcards from key concepts & quiz questions
   const flashcards = [];
-  if (note.notes?.keyConcepts) {
+  if (note?.notes?.keyConcepts) {
     note.notes.keyConcepts.forEach(item => {
       flashcards.push({
         type: 'Key Definition',
@@ -35,7 +42,7 @@ export default function StudyDeck({ note }) {
       });
     });
   }
-  if (note.notes?.quizQuestions) {
+  if (note?.notes?.quizQuestions) {
     note.notes.quizQuestions.forEach(item => {
       flashcards.push({
         type: 'Review Question',
@@ -45,12 +52,46 @@ export default function StudyDeck({ note }) {
     });
   }
 
-  if (flashcards.length === 0) {
+  if (flashcards.length === 0 && note) {
     flashcards.push({
       type: 'Overview',
       front: note.title,
       back: note.notes?.summary || 'General overview of the session.'
     });
+  }
+
+  const totalCards = Math.max(1, flashcards.length);
+
+  // Keyboard navigation for flashcards (Left/Right arrows & Spacebar to flip)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setIsFlipped(false);
+        setCurrentCardIndex(prev => (prev + 1) % totalCards);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setIsFlipped(false);
+        setCurrentCardIndex(prev => (prev - 1 + totalCards) % totalCards);
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setIsFlipped(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [totalCards]);
+
+  if (!note) {
+    return (
+      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+        Select a session to access review flashcards and the lecture assistant.
+      </div>
+    );
   }
 
   const currentCard = flashcards[currentCardIndex % flashcards.length];

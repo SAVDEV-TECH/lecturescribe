@@ -1,6 +1,17 @@
 import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 
+// Supported ISO-639-1 language codes accepted by Groq Whisper Large V3 Turbo
+const SUPPORTED_WHISPER_LANGS = new Set([
+  'en', 'fr', 'es', 'yo', 'de', 'pt', 'ar', 'zh', 'hi', 'it', 'nl', 'ru', 'ja', 'ko'
+]);
+
+const DIALECT_PROMPTS = {
+  pcm: 'University lecture transcript in Nigerian Pidgin English and standard English.',
+  ig: 'University lecture transcript in Igbo and English.',
+  yo: 'University lecture transcript in Yoruba and English.',
+};
+
 export async function POST(request) {
   try {
     const apiKey = process.env.GROQ_API_KEY;
@@ -13,7 +24,7 @@ export async function POST(request) {
 
     const formData = await request.formData();
     const file = formData.get('file');
-    const language = formData.get('language') || undefined;
+    const rawLanguage = (formData.get('language') || '').trim().toLowerCase();
 
     if (!file) {
       return NextResponse.json({ error: 'No audio file provided.' }, { status: 400 });
@@ -21,18 +32,28 @@ export async function POST(request) {
 
     const groq = new Groq({ apiKey });
 
+    const whisperLanguage =
+      rawLanguage && rawLanguage !== 'auto' && SUPPORTED_WHISPER_LANGS.has(rawLanguage)
+        ? rawLanguage
+        : undefined;
+
+    const whisperPrompt =
+      DIALECT_PROMPTS[rawLanguage] ||
+      'Academic university lecture with technical terminology, clear punctuation, and structured explanations.';
+
     // Whisper Large V3 Turbo on Groq
     const transcription = await groq.audio.transcriptions.create({
       file: file,
       model: 'whisper-large-v3-turbo',
-      language: language && language !== 'auto' ? language : undefined,
+      language: whisperLanguage,
+      prompt: whisperPrompt,
       response_format: 'verbose_json',
       temperature: 0.0,
     });
 
     return NextResponse.json({
       text: transcription.text,
-      language: transcription.language,
+      language: transcription.language || rawLanguage || 'en',
       duration: transcription.duration,
       segments: transcription.segments || []
     });

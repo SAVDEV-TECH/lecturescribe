@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react';
 
 export default function PwaRegister() {
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  });
   const [showBanner, setShowBanner] = useState(false);
 
   useEffect(() => {
@@ -26,11 +29,6 @@ export default function PwaRegister() {
       } else {
         window.addEventListener('load', registerSw, { once: true });
       }
-    }
-
-    // Check if already in standalone mode (installed)
-    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
-      setIsInstalled(true);
     }
 
     // Listen for install prompt

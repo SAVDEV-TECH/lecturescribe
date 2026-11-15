@@ -2,9 +2,27 @@
 
 import { useState } from 'react';
 
-export default function NotesPane({ note }) {
+export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
+  const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(note?.title || '');
+  const [editTag, setEditTag] = useState(note?.tag || 'General Studies');
+  const [editSummary, setEditSummary] = useState(note?.notes?.summary || '');
+  const [editTranscript, setEditTranscript] = useState(note?.transcript || '');
+
+  // Reset edit mode when switching notes
+  if (note?.id !== trackedNoteId) {
+    setTrackedNoteId(note?.id);
+    setIsEditing(false);
+    setEditTitle(note?.title || '');
+    setEditTag(note?.tag || 'General Studies');
+    setEditSummary(note?.notes?.summary || '');
+    setEditTranscript(note?.transcript || '');
+  }
 
   if (!note) {
     return (
@@ -23,6 +41,34 @@ export default function NotesPane({ note }) {
   }
 
   const { title, tag, timestamp, transcript, notes } = note;
+
+  const startEditing = () => {
+    setEditTitle(title || '');
+    setEditTag(tag || 'General Studies');
+    setEditSummary(notes?.summary || '');
+    setEditTranscript(transcript || '');
+    setIsEditing(true);
+    setShowFullTranscript(true);
+  };
+
+  const handleSaveEdits = () => {
+    if (!onUpdateNote) {
+      setIsEditing(false);
+      return;
+    }
+    const updated = {
+      ...note,
+      title: editTitle.trim() || 'Untitled Lecture',
+      tag: editTag.trim() || 'General Studies',
+      transcript: editTranscript,
+      notes: {
+        ...(notes || {}),
+        summary: editSummary
+      }
+    };
+    onUpdateNote(updated);
+    setIsEditing(false);
+  };
 
   const exportToWord = () => {
     const conceptsHtml = (notes?.keyConcepts || []).map(c => `<li><strong>${c.term}:</strong> ${c.definition}</li>`).join('');
@@ -60,11 +106,28 @@ export default function NotesPane({ note }) {
     window.print();
   };
 
-  const shareLink = () => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url);
-    setCopiedShare(true);
-    setTimeout(() => setCopiedShare(false), 2000);
+  const shareLink = async () => {
+    const shareUrl = `${window.location.origin}/?note=${encodeURIComponent(note.id)}`;
+    const conceptsText = (notes?.keyConcepts || [])
+      .map(c => `• ${c.term}: ${c.definition}`)
+      .join('\n');
+    const sharePayload = [
+      `📚 ${title} (${tag || 'General'}) — ${timestamp}`,
+      '',
+      `Summary: ${notes?.summary || 'No summary compiled.'}`,
+      conceptsText ? `\nKey Concepts:\n${conceptsText}` : '',
+      `\nOpen in LectureScribe: ${shareUrl}`
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    try {
+      await navigator.clipboard.writeText(sharePayload);
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 2200);
+    } catch (e) {
+      console.warn('Clipboard copy note:', e);
+    }
   };
 
   return (
@@ -87,82 +150,199 @@ export default function NotesPane({ note }) {
         borderBottom: '1px solid var(--border-subtle)',
         paddingBottom: '1.25rem'
       }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
-            <span style={{
-              fontSize: '0.74rem',
-              fontWeight: 600,
-              padding: '0.2rem 0.6rem',
-              borderRadius: '4px',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--primary)'
-            }}>
-              {tag || 'General'}
-            </span>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{timestamp}</span>
-          </div>
+        <div style={{ flex: 1, minWidth: '240px' }}>
+          {isEditing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <select
+                  value={editTag}
+                  onChange={(e) => setEditTag(e.target.value)}
+                  style={{
+                    padding: '0.35rem 0.65rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '0.78rem',
+                    color: 'var(--text-main)'
+                  }}
+                >
+                  <option value="Computer Science">Computer Science</option>
+                  <option value="Engineering">Engineering</option>
+                  <option value="Medicine & Health">Medicine & Health</option>
+                  <option value="Economics & Finance">Economics & Finance</option>
+                  <option value="Law & Governance">Law & Governance</option>
+                  <option value="General Studies">General Studies</option>
+                </select>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+                  {timestamp}
+                </span>
+              </div>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Lecture Title"
+                style={{
+                  width: '100%',
+                  padding: '0.55rem 0.75rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-input)',
+                  border: '1px solid var(--border-strong)',
+                  fontSize: '1.1rem',
+                  fontWeight: 700,
+                  color: 'var(--text-main)',
+                  outline: 'none'
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
+                <span style={{
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  padding: '0.2rem 0.6rem',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--primary)'
+                }}>
+                  {tag || 'General'}
+                </span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{timestamp}</span>
+              </div>
 
-          <h2 style={{ fontSize: '1.3rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
-            {title}
-          </h2>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
+                {title}
+              </h2>
+            </>
+          )}
         </div>
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            onClick={exportToWord}
-            style={{
-              padding: '0.45rem 0.8rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.8rem',
-              fontWeight: 500,
-              color: 'var(--text-main)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}
-          >
-            Export Word
-          </button>
+          {isEditing ? (
+            <>
+              <button
+                onClick={handleSaveEdits}
+                style={{
+                  padding: '0.45rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--primary)',
+                  color: '#fff',
+                  fontSize: '0.8rem',
+                  fontWeight: 600
+                }}
+              >
+                Save Changes
+              </button>
+              <button
+                onClick={() => setIsEditing(false)}
+                style={{
+                  padding: '0.45rem 0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)'
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {onUpdateNote && (
+                <button
+                  onClick={startEditing}
+                  style={{
+                    padding: '0.45rem 0.8rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '0.8rem',
+                    fontWeight: 500,
+                    color: 'var(--text-main)'
+                  }}
+                >
+                  Edit
+                </button>
+              )}
 
-          <button
-            onClick={exportToPDF}
-            style={{
-              padding: '0.45rem 0.8rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.8rem',
-              fontWeight: 500,
-              color: 'var(--text-main)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}
-          >
-            Print / PDF
-          </button>
+              <button
+                onClick={exportToWord}
+                style={{
+                  padding: '0.45rem 0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  color: 'var(--text-main)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem'
+                }}
+              >
+                Export Word
+              </button>
 
-          <button
-            onClick={shareLink}
-            style={{
-              padding: '0.45rem 0.8rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: copiedShare ? 'var(--success)' : 'var(--bg-surface-elevated)',
-              color: copiedShare ? '#fff' : 'var(--text-main)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.8rem',
-              fontWeight: 500,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}
-          >
-            {copiedShare ? 'Link Copied' : 'Share Link'}
-          </button>
+              <button
+                onClick={exportToPDF}
+                style={{
+                  padding: '0.45rem 0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  color: 'var(--text-main)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem'
+                }}
+              >
+                Print / PDF
+              </button>
+
+              <button
+                onClick={shareLink}
+                style={{
+                  padding: '0.45rem 0.8rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: copiedShare ? 'var(--success)' : 'var(--bg-surface-elevated)',
+                  color: copiedShare ? '#fff' : 'var(--text-main)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem'
+                }}
+              >
+                {copiedShare ? 'Summary & Link Copied' : 'Share Notes'}
+              </button>
+
+              {onDeleteNote && (
+                <button
+                  onClick={() => onDeleteNote(note.id)}
+                  title="Delete this session"
+                  style={{
+                    padding: '0.45rem 0.7rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '0.8rem',
+                    fontWeight: 500,
+                    color: 'var(--danger)'
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -171,9 +351,29 @@ export default function NotesPane({ note }) {
         <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
           Executive Summary
         </h3>
-        <p style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)' }}>
-          {notes?.summary || 'No summary compiled yet.'}
-        </p>
+        {isEditing ? (
+          <textarea
+            value={editSummary}
+            onChange={(e) => setEditSummary(e.target.value)}
+            rows={4}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-input)',
+              border: '1px solid var(--border-strong)',
+              fontSize: '0.88rem',
+              lineHeight: 1.6,
+              color: 'var(--text-main)',
+              outline: 'none',
+              resize: 'vertical'
+            }}
+          />
+        ) : (
+          <p style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+            {notes?.summary || 'No summary compiled yet.'}
+          </p>
+        )}
       </section>
 
       {/* Key Concepts Grid */}
@@ -269,20 +469,41 @@ export default function NotesPane({ note }) {
         </button>
 
         {showFullTranscript && (
-          <div style={{
-            marginTop: '0.75rem',
-            padding: '1rem',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'var(--bg-app)',
-            border: '1px solid var(--border-subtle)',
-            fontSize: '0.82rem',
-            lineHeight: 1.7,
-            color: 'var(--text-secondary)',
-            maxHeight: '280px',
-            overflowY: 'auto'
-          }}>
-            {transcript || 'No transcript text available.'}
-          </div>
+          isEditing ? (
+            <textarea
+              value={editTranscript}
+              onChange={(e) => setEditTranscript(e.target.value)}
+              rows={7}
+              style={{
+                marginTop: '0.75rem',
+                width: '100%',
+                padding: '0.85rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-input)',
+                border: '1px solid var(--border-strong)',
+                fontSize: '0.82rem',
+                lineHeight: 1.7,
+                color: 'var(--text-main)',
+                outline: 'none',
+                resize: 'vertical'
+              }}
+            />
+          ) : (
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '1rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-app)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '0.82rem',
+              lineHeight: 1.7,
+              color: 'var(--text-secondary)',
+              maxHeight: '280px',
+              overflowY: 'auto'
+            }}>
+              {transcript || 'No transcript text available.'}
+            </div>
+          )
         )}
       </section>
     </div>

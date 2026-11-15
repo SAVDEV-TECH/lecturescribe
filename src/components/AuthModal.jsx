@@ -16,6 +16,73 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
   useEffect(() => {
     if (!isOpen) return;
 
+    const handleGoogleCredentialResponse = async (response) => {
+      if (!response.credential) return;
+
+      if (isSupabaseConfigured()) {
+        try {
+          const { data, error } = await supabase.auth.signInWithIdToken({
+            provider: 'google',
+            token: response.credential,
+          });
+
+          if (error) throw error;
+          if (data.user) {
+            onAuthSuccess(data.user);
+            onClose();
+          }
+        } catch (err) {
+          console.error('Google token sign-in error:', err);
+        }
+      } else {
+        // Decode JWT payload for local session
+        try {
+          const base64Url = response.credential.split('.')[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const jsonPayload = decodeURIComponent(
+            atob(base64)
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          );
+          const payload = JSON.parse(jsonPayload);
+          const googleUser = {
+            id: payload.sub,
+            email: payload.email,
+            name: payload.name || payload.email.split('@')[0],
+            avatar: payload.picture
+          };
+          localStorage.setItem('local_student_user', JSON.stringify(googleUser));
+          onAuthSuccess(googleUser);
+          onClose();
+        } catch (e) {
+          console.warn('Error parsing Google payload:', e);
+        }
+      }
+    };
+
+    const initializeGoogleOneTap = () => {
+      if (typeof window !== 'undefined' && window.google?.accounts?.id) {
+        try {
+          window.google.accounts.id.initialize({
+            client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || 'dummy-google-client-id',
+            callback: handleGoogleCredentialResponse,
+            auto_select: false,
+            cancel_on_tap_outside: true,
+          });
+
+          // Prompt Google One Tap popup
+          window.google.accounts.id.prompt((notification) => {
+            if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+              console.log('Google One Tap prompt skipped or not displayed in this environment.');
+            }
+          });
+        } catch (err) {
+          console.warn('Google One Tap note:', err);
+        }
+      }
+    };
+
     // Check if Google GIS script is already loaded
     if (!document.getElementById('google-client-script')) {
       const script = document.createElement('script');
@@ -30,74 +97,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
     } else {
       initializeGoogleOneTap();
     }
-  }, [isOpen]);
-
-  const initializeGoogleOneTap = () => {
-    if (typeof window !== 'undefined' && window.google?.accounts?.id) {
-      try {
-        window.google.accounts.id.initialize({
-          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || 'dummy-google-client-id',
-          callback: handleGoogleCredentialResponse,
-          auto_select: false,
-          cancel_on_tap_outside: true,
-        });
-
-        // Prompt Google One Tap popup
-        window.google.accounts.id.prompt((notification) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            console.log('Google One Tap prompt skipped or not displayed in this environment.');
-          }
-        });
-      } catch (err) {
-        console.warn('Google One Tap note:', err);
-      }
-    }
-  };
-
-  const handleGoogleCredentialResponse = async (response) => {
-    if (!response.credential) return;
-
-    if (isSupabaseConfigured()) {
-      try {
-        const { data, error } = await supabase.auth.signInWithIdToken({
-          provider: 'google',
-          token: response.credential,
-        });
-
-        if (error) throw error;
-        if (data.user) {
-          onAuthSuccess(data.user);
-          onClose();
-        }
-      } catch (err) {
-        console.error('Google token sign-in error:', err);
-      }
-    } else {
-      // Decode JWT payload for local session
-      try {
-        const base64Url = response.credential.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(
-          atob(base64)
-            .split('')
-            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-            .join('')
-        );
-        const payload = JSON.parse(jsonPayload);
-        const googleUser = {
-          id: payload.sub,
-          email: payload.email,
-          name: payload.name || payload.email.split('@')[0],
-          avatar: payload.picture
-        };
-        localStorage.setItem('local_student_user', JSON.stringify(googleUser));
-        onAuthSuccess(googleUser);
-        onClose();
-      } catch (e) {
-        console.warn('Error parsing Google payload:', e);
-      }
-    }
-  };
+  }, [isOpen, onAuthSuccess, onClose]);
 
   if (!isOpen) return null;
 

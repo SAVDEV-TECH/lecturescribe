@@ -5,7 +5,42 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 // Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
 const SILENT_AUDIO_DATA = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
-export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
+const SPEECH_RECOGNITION_LANGS = {
+  en: 'en-US',
+  auto: 'en-US',
+  pcm: 'en-NG',
+  ig: 'ig-NG',
+  yo: 'yo-NG',
+  fr: 'fr-FR',
+  es: 'es-ES'
+};
+
+function configureMediaSession({ title, subject, onPause, onPlay, onStop }) {
+  if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'Lecture Recording Active',
+      artist: 'LectureScribe AI (Mic Active)',
+      album: subject,
+      artwork: [
+        { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }
+      ]
+    });
+    navigator.mediaSession.playbackState = 'playing';
+    navigator.mediaSession.setActionHandler('pause', onPause);
+    navigator.mediaSession.setActionHandler('play', onPlay);
+    navigator.mediaSession.setActionHandler('stop', onStop);
+  }
+}
+
+function setMediaSessionPlaybackState(state) {
+  if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = state;
+  }
+}
+
+export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSignal = 0 }) {
+  const [trackedResetSignal, setTrackedResetSignal] = useState(resetSignal);
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState('Computer Science');
   const [language, setLanguage] = useState(initialLanguage);
@@ -23,13 +58,15 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   const [keepScreenAwake, setKeepScreenAwake] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
 
-  // Audio capture refs
+  // Audio capture & UI refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
   const startTimeRef = useRef(null);
   const accumulatedPausedDurationRef = useRef(0);
   const lastPauseTimestampRef = useRef(null);
+  const titleInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Background Audio Anchor & Wake Lock
   const silentAudioRef = useRef(null);
@@ -41,6 +78,27 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   // Web speech fallback ref
   const speechRecognitionRef = useRef(null);
   const accumulatedWebSpeechRef = useRef('');
+
+  // Reset form state when New Lecture is triggered
+  if (resetSignal !== trackedResetSignal) {
+    setTrackedResetSignal(resetSignal);
+    if (!isRecording && !isProcessing) {
+      setTitle('');
+      setLiveTranscript('');
+      setStatusMessage('');
+      setTimerSeconds(0);
+    }
+  }
+
+  // Focus title input when New Lecture is triggered
+  useEffect(() => {
+    if (resetSignal > 0 && !isRecording && !isProcessing) {
+      accumulatedWebSpeechRef.current = '';
+      if (titleInputRef.current) {
+        titleInputRef.current.focus();
+      }
+    }
+  }, [resetSignal, isRecording, isProcessing]);
 
   // Keep screen wake lock updated if toggled
   useEffect(() => {
@@ -112,6 +170,161 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const stopBackgroundAudioAnchor = () => {
+    if (silentAudioRef.current) {
+      try {
+        silentAudioRef.current.pause();
+      } catch (e) {}
+    }
+    setMediaSessionPlaybackState('none');
+  };
+
+  // Shared transcription + AI note synthesis pipeline
+  const processAudioAndCompile = async (audioBlobOrFile, uploadFileName, fallbackText, effectiveTitle) => {
+    setIsProcessing(true);
+    setStatusMessage('Transcribing lecture with Groq Whisper V3...');
+
+    let finalTranscript = '';
+
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlobOrFile, uploadFileName);
+      formData.append('language', language);
+
+      const transcribeRes = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (transcribeRes.ok) {
+        const data = await transcribeRes.json();
+        finalTranscript = data.text;
+      } else {
+        const errData = await transcribeRes.json();
+        console.warn('Transcribe note:', errData.error);
+      }
+    } catch (err) {
+      console.warn('Transcribe network error:', err);
+    }
+
+    if (!finalTranscript || finalTranscript.trim().length === 0) {
+      finalTranscript =
+        fallbackText ||
+        `Recorded lecture on "${effectiveTitle}" (${subject}). Enable GROQ_API_KEY in .env.local to transcribe audio files automatically with Whisper Large V3 Turbo.`;
+    }
+
+    setLiveTranscript(finalTranscript);
+    setStatusMessage('Analyzing transcript and compiling study notes...');
+
+    let notesData = null;
+    try {
+      const analyzeRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: finalTranscript,
+          title: effectiveTitle,
+          subject: subject
+        })
+      });
+
+      if (analyzeRes.ok) {
+        notesData = await analyzeRes.json();
+      }
+    } catch (err) {
+      console.error('Analysis error:', err);
+    }
+
+    const newNote = {
+      id: 'lecture_' + Date.now(),
+      title: effectiveTitle,
+      tag: subject,
+      timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      transcript: finalTranscript,
+      notes: notesData
+    };
+
+    onSaveNote(newNote);
+    setIsProcessing(false);
+    setStatusMessage('Session saved and compiled successfully');
+  };
+
+  const togglePause = () => {
+    if (!mediaRecorderRef.current) return;
+
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([30]);
+    }
+
+    if (isPaused) {
+      mediaRecorderRef.current.resume();
+      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
+      setMediaSessionPlaybackState('playing');
+
+      if (lastPauseTimestampRef.current) {
+        accumulatedPausedDurationRef.current += (Date.now() - lastPauseTimestampRef.current);
+        lastPauseTimestampRef.current = null;
+      }
+
+      setIsPaused(false);
+      setStatusMessage('Recording resumed');
+      timerIntervalRef.current = setInterval(() => {
+        if (startTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
+          );
+          setTimerSeconds(Math.max(0, elapsed));
+        }
+      }, 1000);
+    } else {
+      mediaRecorderRef.current.pause();
+      if (silentAudioRef.current) silentAudioRef.current.pause();
+      setMediaSessionPlaybackState('paused');
+
+      lastPauseTimestampRef.current = Date.now();
+      setIsPaused(true);
+      setStatusMessage('Recording paused');
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    }
+  };
+
+  const stopRecording = () => {
+    if (!mediaRecorderRef.current) return;
+
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([50, 50, 50]);
+    }
+
+    setIsStealthMode(false);
+    stopBackgroundAudioAnchor();
+
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch (e) {}
+    }
+
+    mediaRecorderRef.current.onstop = async () => {
+      setIsRecording(false);
+      setIsPaused(false);
+
+      const mimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
+      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+
+      const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const effectiveTitle = title.trim() || `Lecture on ${subject}`;
+      const fallbackText =
+        liveTranscript ||
+        accumulatedWebSpeechRef.current ||
+        'Recorded session. Audio stream was silent or no speech was detected.';
+
+      await processAudioAndCompile(audioBlob, `lecture.${fileExt}`, fallbackText, effectiveTitle);
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
   // Start Background Audio Anchor & MediaSession so mobile OS does not pause recording when screen is off
   const startBackgroundAudioAnchor = () => {
     try {
@@ -123,41 +336,15 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       }
       silentAudioRef.current.play().catch(() => {});
 
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: title.trim() || 'Lecture Recording Active',
-          artist: 'LectureScribe AI (Mic Active)',
-          album: subject,
-          artwork: [
-            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }
-          ]
-        });
-        navigator.mediaSession.playbackState = 'playing';
-
-        navigator.mediaSession.setActionHandler('pause', () => {
-          togglePause();
-        });
-        navigator.mediaSession.setActionHandler('play', () => {
-          togglePause();
-        });
-        navigator.mediaSession.setActionHandler('stop', () => {
-          stopRecording();
-        });
-      }
+      configureMediaSession({
+        title: title.trim() || 'Lecture Recording Active',
+        subject,
+        onPause: () => togglePause(),
+        onPlay: () => togglePause(),
+        onStop: () => stopRecording()
+      });
     } catch (e) {
       console.warn('Background audio setup note:', e);
-    }
-  };
-
-  const stopBackgroundAudioAnchor = () => {
-    if (silentAudioRef.current) {
-      try {
-        silentAudioRef.current.pause();
-      } catch (e) {}
-    }
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.playbackState = 'none';
     }
   };
 
@@ -190,6 +377,45 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       updateLevel();
     } catch (e) {
       console.warn('Audio meter init note:', e);
+    }
+  };
+
+  const initLiveSpeechPreview = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = SPEECH_RECOGNITION_LANGS[language] || 'en-US';
+
+      recognition.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            accumulatedWebSpeechRef.current += ' ' + event.results[i][0].transcript;
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+        setLiveTranscript((accumulatedWebSpeechRef.current + ' ' + interim).trim());
+      };
+
+      recognition.onerror = (e) => {
+        console.warn('Speech engine:', e.error);
+      };
+
+      recognition.onend = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          try { recognition.start(); } catch (e) {}
+        }
+      };
+
+      recognition.start();
+      speechRecognitionRef.current = recognition;
+    } catch (e) {
+      console.warn('Speech preview init note:', e);
     }
   };
 
@@ -227,9 +453,19 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       }
 
       audioChunksRef.current = [];
-      const mediaRecorder = selectedMimeType
-        ? new MediaRecorder(stream, { mimeType: selectedMimeType })
-        : new MediaRecorder(stream);
+      const recorderOptions = { audioBitsPerSecond: 32000 };
+      if (selectedMimeType) {
+        recorderOptions.mimeType = selectedMimeType;
+      }
+
+      let mediaRecorder;
+      try {
+        mediaRecorder = new MediaRecorder(stream, recorderOptions);
+      } catch (e) {
+        mediaRecorder = selectedMimeType
+          ? new MediaRecorder(stream, { mimeType: selectedMimeType })
+          : new MediaRecorder(stream);
+      }
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -268,177 +504,36 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
     }
   };
 
-  const initLiveSpeechPreview = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = language === 'auto' ? 'en-US' : language;
+    // Reset input value so the same file can be selected again if needed
+    event.target.value = '';
 
-      recognition.onresult = (event) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            accumulatedWebSpeechRef.current += ' ' + event.results[i][0].transcript;
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-        setLiveTranscript((accumulatedWebSpeechRef.current + ' ' + interim).trim());
-      };
-
-      recognition.onerror = (e) => {
-        console.warn('Speech engine:', e.error);
-      };
-
-      recognition.onend = () => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          try { recognition.start(); } catch (e) {}
-        }
-      };
-
-      recognition.start();
-      speechRecognitionRef.current = recognition;
-    } catch (e) {
-      console.warn('Speech preview init note:', e);
-    }
-  };
-
-  const togglePause = () => {
-    if (!mediaRecorderRef.current) return;
-
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate([30]);
+    // Groq Whisper API max file size is 25 MB
+    const maxBytes = 25 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setStatusMessage('Audio file exceeds the 25 MB limit. Please upload a compressed audio file (e.g. MP3/M4A).');
+      return;
     }
 
-    if (isPaused) {
-      mediaRecorderRef.current.resume();
-      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    const derivedTitle = file.name
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[_-]+/g, ' ')
+      .trim();
 
-      if (lastPauseTimestampRef.current) {
-        accumulatedPausedDurationRef.current += (Date.now() - lastPauseTimestampRef.current);
-        lastPauseTimestampRef.current = null;
-      }
-
-      setIsPaused(false);
-      setStatusMessage('Recording resumed');
-      timerIntervalRef.current = setInterval(() => {
-        if (startTimeRef.current) {
-          const elapsed = Math.floor(
-            (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
-          );
-          setTimerSeconds(Math.max(0, elapsed));
-        }
-      }, 1000);
-    } else {
-      mediaRecorderRef.current.pause();
-      if (silentAudioRef.current) silentAudioRef.current.pause();
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
-
-      lastPauseTimestampRef.current = Date.now();
-      setIsPaused(true);
-      setStatusMessage('Recording paused');
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    }
-  };
-
-  const stopRecording = () => {
-    if (!mediaRecorderRef.current) return;
-
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate([50, 50, 50]);
+    const effectiveTitle = title.trim() || derivedTitle || `Lecture on ${subject}`;
+    if (!title.trim() && derivedTitle) {
+      setTitle(derivedTitle);
     }
 
-    setIsStealthMode(false);
-    stopBackgroundAudioAnchor();
-
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    if (speechRecognitionRef.current) {
-      try { speechRecognitionRef.current.stop(); } catch (e) {}
-    }
-
-    mediaRecorderRef.current.onstop = async () => {
-      setIsRecording(false);
-      setIsPaused(false);
-      setIsProcessing(true);
-      setStatusMessage('Transcribing lecture with Groq Whisper V3...');
-
-      const mimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
-      const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-
-      let finalTranscript = '';
-
-      try {
-        const formData = new FormData();
-        const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        formData.append('file', audioBlob, `lecture.${fileExt}`);
-        formData.append('language', language);
-
-        const transcribeRes = await fetch('/api/transcribe', {
-          method: 'POST',
-          body: formData
-        });
-
-        if (transcribeRes.ok) {
-          const data = await transcribeRes.json();
-          finalTranscript = data.text;
-        } else {
-          const errData = await transcribeRes.json();
-          console.warn('Transcribe note:', errData.error);
-        }
-      } catch (err) {
-        console.warn('Transcribe network error:', err);
-      }
-
-      if (!finalTranscript || finalTranscript.trim().length === 0) {
-        finalTranscript = liveTranscript || accumulatedWebSpeechRef.current || 
-          'Recorded session. Audio stream was silent or no speech was detected.';
-      }
-
-      setLiveTranscript(finalTranscript);
-      setStatusMessage('Analyzing transcript and compiling study notes...');
-
-      let notesData = null;
-      try {
-        const analyzeRes = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            transcript: finalTranscript,
-            title: title.trim() || 'Untitled Lecture',
-            subject: subject
-          })
-        });
-
-        if (analyzeRes.ok) {
-          notesData = await analyzeRes.json();
-        }
-      } catch (err) {
-        console.error('Analysis error:', err);
-      }
-
-      const newNote = {
-        id: 'lecture_' + Date.now(),
-        title: title.trim() || 'Lecture on ' + subject,
-        tag: subject,
-        timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        transcript: finalTranscript,
-        notes: notesData
-      };
-
-      onSaveNote(newNote);
-      setIsProcessing(false);
-      setStatusMessage('Session saved and compiled successfully');
-    };
-
-    mediaRecorderRef.current.stop();
+    await processAudioAndCompile(
+      file,
+      file.name,
+      `Uploaded audio file "${file.name}" for ${effectiveTitle} (${subject}).`,
+      effectiveTitle
+    );
   };
 
   return (
@@ -544,6 +639,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
             SESSION TITLE
           </label>
           <input
+            ref={titleInputRef}
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -709,28 +805,65 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
 
         {/* Action Buttons (Full mobile touch size) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.aac,.flac"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
           {!isRecording ? (
-            <button
-              onClick={startRecording}
-              disabled={isProcessing}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.55rem',
-                padding: '0.75rem 1.5rem',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--danger)',
-                color: '#fff',
-                fontWeight: 700,
-                fontSize: '0.92rem',
-                boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)'
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="8" />
-              </svg>
-              <span>Start Recording</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing}
+                title="Upload a pre-recorded lecture audio file (MP3, WAV, M4A, WebM)"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  padding: '0.75rem 1.1rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-main)',
+                  fontWeight: 600,
+                  fontSize: '0.86rem',
+                  opacity: isProcessing ? 0.6 : 1
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>Upload Audio</span>
+              </button>
+
+              <button
+                onClick={startRecording}
+                disabled={isProcessing}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.55rem',
+                  padding: '0.75rem 1.5rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--danger)',
+                  color: '#fff',
+                  fontWeight: 700,
+                  fontSize: '0.92rem',
+                  boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                  opacity: isProcessing ? 0.6 : 1
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="8" />
+                </svg>
+                <span>Start Recording</span>
+              </button>
+            </>
           ) : (
             <>
               {/* Screen Off / Stealth button for mobile battery saving */}

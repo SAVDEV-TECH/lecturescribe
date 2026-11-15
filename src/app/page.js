@@ -20,58 +20,10 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [recorderResetSignal, setRecorderResetSignal] = useState(0);
 
-  // Load theme and notes on mount
-  useEffect(() => {
-    // Theme
-    const savedTheme = localStorage.getItem('ls_theme') || 'dark';
-    setTheme(savedTheme);
-    document.documentElement.setAttribute('data-theme', savedTheme);
-
-    // Initial Local Notes
-    const savedNotes = localStorage.getItem('ls_notes');
-    if (savedNotes) {
-      try {
-        const parsed = JSON.parse(savedNotes);
-        if (parsed.length > 0) {
-          setNotes(parsed);
-          setActiveNoteId(parsed[0].id);
-        }
-      } catch (e) {
-        console.warn('Failed to parse local notes', e);
-      }
-    }
-
-    // Check Supabase Auth
-    if (isSupabaseConfigured()) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          setUser(session.user);
-          loadSupabaseNotes(session.user.id);
-        }
-      });
-
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          setUser(session.user);
-          loadSupabaseNotes(session.user.id);
-        } else {
-          setUser(null);
-        }
-      });
-
-      return () => subscription.unsubscribe();
-    } else {
-      // Check local guest user
-      const localUser = localStorage.getItem('local_student_user');
-      if (localUser) {
-        try { setUser(JSON.parse(localUser)); } catch (e) {}
-      }
-    }
-  }, []);
-
-  // Sync notes to Supabase
-  const loadSupabaseNotes = async (userId) => {
+  // Sync notes from Supabase
+  const loadSupabaseNotes = async (requestedNoteId) => {
     try {
       const { data, error } = await supabase
         .from('notes')
@@ -88,12 +40,77 @@ export default function Home() {
           notes: n.notes_json
         }));
         setNotes(formatted);
-        setActiveNoteId(formatted[0].id);
+        const target = requestedNoteId && formatted.some(n => String(n.id) === String(requestedNoteId))
+          ? requestedNoteId
+          : formatted[0].id;
+        setActiveNoteId(target);
       }
     } catch (err) {
       console.warn('Supabase fetch notes error:', err);
     }
   };
+
+  // Load theme, notes, and URL parameters on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('ls_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+
+    const params = new URLSearchParams(window.location.search);
+    const actionParam = params.get('action');
+    const noteParam = params.get('note');
+
+    queueMicrotask(() => {
+      setTheme(savedTheme);
+
+      if (actionParam === 'record') {
+        setActiveTab('workspace');
+        setRecorderResetSignal(prev => prev + 1);
+      }
+
+      // Initial Local Notes
+      const savedNotes = localStorage.getItem('ls_notes');
+      if (savedNotes) {
+        try {
+          const parsed = JSON.parse(savedNotes);
+          if (parsed.length > 0) {
+            setNotes(parsed);
+            const matched = noteParam && parsed.find(n => String(n.id) === String(noteParam));
+            setActiveNoteId(matched ? matched.id : parsed[0].id);
+          }
+        } catch (e) {
+          console.warn('Failed to parse local notes', e);
+        }
+      }
+
+      if (!isSupabaseConfigured()) {
+        const localUser = localStorage.getItem('local_student_user');
+        if (localUser) {
+          try { setUser(JSON.parse(localUser)); } catch (e) {}
+        }
+      }
+    });
+
+    // Check Supabase Auth
+    if (isSupabaseConfigured()) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          setUser(session.user);
+          loadSupabaseNotes(noteParam);
+        }
+      });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          setUser(session.user);
+          loadSupabaseNotes(noteParam);
+        } else {
+          setUser(null);
+        }
+      });
+
+      return () => subscription.unsubscribe();
+    }
+  }, []);
 
   // Toggle Theme
   const toggleTheme = () => {
@@ -105,23 +122,75 @@ export default function Home() {
 
   // Handle Save Note
   const handleSaveNote = async (newNote) => {
-    const updatedNotes = [newNote, ...notes];
-    setNotes(updatedNotes);
-    setActiveNoteId(newNote.id);
-    localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+    let savedNote = newNote;
 
-    // If user is logged into Supabase, save to DB
+    // If user is logged into Supabase, save to DB and capture DB UUID
     if (isSupabaseConfigured() && user) {
       try {
-        await supabase.from('notes').insert({
-          user_id: user.id,
-          title: newNote.title,
-          tag: newNote.tag,
-          transcript: newNote.transcript,
-          notes_json: newNote.notes
-        });
+        const { data, error } = await supabase
+          .from('notes')
+          .insert({
+            user_id: user.id,
+            title: newNote.title,
+            tag: newNote.tag,
+            transcript: newNote.transcript,
+            notes_json: newNote.notes
+          })
+          .select()
+          .single();
+
+        if (!error && data?.id) {
+          savedNote = { ...newNote, id: data.id };
+        }
       } catch (e) {
         console.warn('Failed to insert into Supabase:', e);
+      }
+    }
+
+    const updatedNotes = [savedNote, ...notes];
+    setNotes(updatedNotes);
+    setActiveNoteId(savedNote.id);
+    localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+  };
+
+  // Handle Update Note (Edit Title, Tag, Summary, Transcript)
+  const handleUpdateNote = async (updatedNote) => {
+    const updatedNotes = notes.map(n => (n.id === updatedNote.id ? updatedNote : n));
+    setNotes(updatedNotes);
+    localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+
+    if (isSupabaseConfigured() && user) {
+      try {
+        await supabase
+          .from('notes')
+          .update({
+            title: updatedNote.title,
+            tag: updatedNote.tag,
+            transcript: updatedNote.transcript,
+            notes_json: updatedNote.notes
+          })
+          .eq('id', updatedNote.id);
+      } catch (e) {
+        console.warn('Failed to update note in Supabase:', e);
+      }
+    }
+  };
+
+  // Handle Delete Note
+  const handleDeleteNote = async (noteId) => {
+    const remainingNotes = notes.filter(n => n.id !== noteId);
+    setNotes(remainingNotes);
+    localStorage.setItem('ls_notes', JSON.stringify(remainingNotes));
+
+    if (activeNoteId === noteId) {
+      setActiveNoteId(remainingNotes[0]?.id || null);
+    }
+
+    if (isSupabaseConfigured() && user) {
+      try {
+        await supabase.from('notes').delete().eq('id', noteId);
+      } catch (e) {
+        console.warn('Failed to delete note from Supabase:', e);
       }
     }
   };
@@ -129,6 +198,7 @@ export default function Home() {
   // Start New Note
   const handleNewNote = () => {
     setActiveTab('workspace');
+    setRecorderResetSignal(prev => prev + 1);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -141,7 +211,7 @@ export default function Home() {
     setUser(null);
   };
 
-  const activeNote = notes.find(n => n.id === activeNoteId) || notes[0];
+  const activeNote = notes.find(n => n.id === activeNoteId) || notes[0] || null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: 'var(--bg-app)' }}>
@@ -164,6 +234,7 @@ export default function Home() {
           activeNoteId={activeNoteId}
           onSelectNote={setActiveNoteId}
           onNewNote={handleNewNote}
+          onDeleteNote={handleDeleteNote}
           user={user}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           onLogout={handleLogout}
@@ -175,8 +246,12 @@ export default function Home() {
         <main style={{ flex: 1, padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {activeTab === 'workspace' && (
             <>
-              <Recorder onSaveNote={handleSaveNote} />
-              <NotesPane note={activeNote} />
+              <Recorder onSaveNote={handleSaveNote} resetSignal={recorderResetSignal} />
+              <NotesPane
+                note={activeNote}
+                onUpdateNote={handleUpdateNote}
+                onDeleteNote={handleDeleteNote}
+              />
             </>
           )}
 
