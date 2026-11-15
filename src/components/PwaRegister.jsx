@@ -10,7 +10,7 @@ export default function PwaRegister() {
   useEffect(() => {
     // Register Service Worker
     if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-      window.addEventListener('load', () => {
+      const registerSw = () => {
         navigator.serviceWorker
           .register('/sw.js')
           .then((reg) => {
@@ -19,7 +19,13 @@ export default function PwaRegister() {
           .catch((err) => {
             console.warn('PWA ServiceWorker registration failed:', err);
           });
-      });
+      };
+
+      if (document.readyState === 'complete') {
+        registerSw();
+      } else {
+        window.addEventListener('load', registerSw, { once: true });
+      }
     }
 
     // Check if already in standalone mode (installed)
@@ -69,7 +75,7 @@ export default function PwaRegister() {
   return (
     <div style={{
       position: 'fixed',
-      bottom: '1rem',
+      bottom: 'calc(4.75rem + env(safe-area-inset-bottom, 0px))',
       left: '1rem',
       right: '1rem',
       maxWidth: '460px',

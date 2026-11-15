@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.lecturescribeai.app",
+        "sha256_cert_fingerprints": ["E2:40:9E:AE:67:72:6B:09:88:83:8B:6F:FB:88:6A:3C:1B:B3:20:CD:5F:59:80:0C:94:50:59:0C:09:BD:4B:5E"]
+      }
+    }]

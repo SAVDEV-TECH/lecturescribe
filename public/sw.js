@@ -42,8 +42,10 @@ self.addEventListener('fetch', (event) => {
   // Network first with cache fallback for pages and navigation
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => {
-        return caches.match('/') || caches.match(request);
+      fetch(request).catch(async () => {
+        const cachedReq = await caches.match(request);
+        if (cachedReq) return cachedReq;
+        return caches.match('/');
       })
     );
     return;
