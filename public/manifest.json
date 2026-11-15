@@ -1,0 +1,47 @@
+{
+  "name": "LectureScribe AI — Smart Lecture Recording & Study Assistant",
+  "short_name": "LectureScribe",
+  "description": "Mobile lecture speech transcription with Groq Whisper, automated AI note generation, interactive flashcards, and student AI tutor.",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0f17",
+  "theme_color": "#0b0f17",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Record Lecture",
+      "short_name": "Record",
+      "description": "Open recorder immediately",
+      "url": "/?action=record",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

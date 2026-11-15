@@ -1,6 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+
+// Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
+const SILENT_AUDIO_DATA = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
 export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   const [title, setTitle] = useState('');
@@ -15,20 +18,90 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   const [statusMessage, setStatusMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Mobile background & stealth screen-off state
+  const [isStealthMode, setIsStealthMode] = useState(false);
+  const [keepScreenAwake, setKeepScreenAwake] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+
   // Audio capture refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
+  const startTimeRef = useRef(null);
+  const accumulatedPausedDurationRef = useRef(0);
+  const lastPauseTimestampRef = useRef(null);
+
+  // Background Audio Anchor & Wake Lock
+  const silentAudioRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
   // Web speech fallback ref
   const speechRecognitionRef = useRef(null);
   const accumulatedWebSpeechRef = useRef('');
 
+  // Keep screen wake lock updated if toggled
+  useEffect(() => {
+    const handleWakeLock = async () => {
+      if (isRecording && keepScreenAwake && 'wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await navigator.wakeLock.request('screen');
+        } catch (e) {
+          console.warn('Wake Lock request:', e);
+        }
+      } else if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+          wakeLockRef.current = null;
+        } catch (e) {}
+      }
+    };
+    handleWakeLock();
+  }, [isRecording, keepScreenAwake]);
+
+  // Recalculate true elapsed time on visibility change (e.g. phone screen turned back on)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (isRecording && !isPaused && startTimeRef.current) {
+        const trueElapsed = Math.floor(
+          (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
+        );
+        if (trueElapsed >= 0) {
+          setTimerSeconds(trueElapsed);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [isRecording, isPaused]);
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (speechRecognitionRef.current) {
         try { speechRecognitionRef.current.stop(); } catch (e) {}
+      }
+      if (silentAudioRef.current) {
+        try {
+          silentAudioRef.current.pause();
+          silentAudioRef.current = null;
+        } catch (e) {}
+      }
+      if (wakeLockRef.current) {
+        try { wakeLockRef.current.release(); } catch (e) {}
+      }
+      if (audioContextRef.current) {
+        try { audioContextRef.current.close(); } catch (e) {}
       }
     };
   }, []);
@@ -39,15 +112,124 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Start Background Audio Anchor & MediaSession so mobile OS does not pause recording when screen is off
+  const startBackgroundAudioAnchor = () => {
+    try {
+      if (!silentAudioRef.current) {
+        const audio = new Audio(SILENT_AUDIO_DATA);
+        audio.loop = true;
+        audio.playsInline = true;
+        silentAudioRef.current = audio;
+      }
+      silentAudioRef.current.play().catch(() => {});
+
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: title.trim() || 'Lecture Recording Active',
+          artist: 'LectureScribe AI (Mic Active)',
+          album: subject,
+          artwork: [
+            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }
+          ]
+        });
+        navigator.mediaSession.playbackState = 'playing';
+
+        navigator.mediaSession.setActionHandler('pause', () => {
+          togglePause();
+        });
+        navigator.mediaSession.setActionHandler('play', () => {
+          togglePause();
+        });
+        navigator.mediaSession.setActionHandler('stop', () => {
+          stopRecording();
+        });
+      }
+    } catch (e) {
+      console.warn('Background audio setup note:', e);
+    }
+  };
+
+  const stopBackgroundAudioAnchor = () => {
+    if (silentAudioRef.current) {
+      try {
+        silentAudioRef.current.pause();
+      } catch (e) {}
+    }
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'none';
+    }
+  };
+
+  // Live audio level visualizer
+  const setupAudioMeter = (stream) => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+
+      audioContextRef.current = ctx;
+      analyserRef.current = analyser;
+
+      const buffer = new Uint8Array(analyser.frequencyBinCount);
+      const updateLevel = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(buffer);
+        let sum = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          sum += buffer[i];
+        }
+        const avg = sum / buffer.length;
+        setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+      updateLevel();
+    } catch (e) {
+      console.warn('Audio meter init note:', e);
+    }
+  };
+
   const startRecording = async () => {
     try {
-      setStatusMessage('Requesting audio input...');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate([40]);
+      }
+
+      setStatusMessage('Requesting microphone access...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      // Best supported audio MIME type across Android and iOS Safari
+      let selectedMimeType = '';
+      if (typeof MediaRecorder !== 'undefined') {
+        const types = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4;codecs=mp4a.40.2',
+          'audio/mp4',
+          'audio/aac'
+        ];
+        for (const t of types) {
+          if (MediaRecorder.isTypeSupported(t)) {
+            selectedMimeType = t;
+            break;
+          }
+        }
+      }
 
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
-      });
+      const mediaRecorder = selectedMimeType
+        ? new MediaRecorder(stream, { mimeType: selectedMimeType })
+        : new MediaRecorder(stream);
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -56,17 +238,29 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       };
 
       mediaRecorderRef.current = mediaRecorder;
+      // Emit chunks every 1000ms so data is never lost if screen turns off
       mediaRecorder.start(1000);
 
+      // Start background keep-alive anchor
+      startBackgroundAudioAnchor();
+      setupAudioMeter(stream);
       initLiveSpeechPreview();
 
       setIsRecording(true);
       setIsPaused(false);
       setTimerSeconds(0);
-      setStatusMessage('Audio stream active');
+      startTimeRef.current = Date.now();
+      accumulatedPausedDurationRef.current = 0;
+      lastPauseTimestampRef.current = null;
+      setStatusMessage('Recording active (Safe to lock or turn off screen)');
 
       timerIntervalRef.current = setInterval(() => {
-        setTimerSeconds(prev => prev + 1);
+        if (startTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
+          );
+          setTimerSeconds(Math.max(0, elapsed));
+        }
       }, 1000);
     } catch (err) {
       console.error('Audio capture error:', err);
@@ -116,17 +310,38 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   const togglePause = () => {
     if (!mediaRecorderRef.current) return;
 
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([30]);
+    }
+
     if (isPaused) {
       mediaRecorderRef.current.resume();
+      if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
+      if (lastPauseTimestampRef.current) {
+        accumulatedPausedDurationRef.current += (Date.now() - lastPauseTimestampRef.current);
+        lastPauseTimestampRef.current = null;
+      }
+
       setIsPaused(false);
-      setStatusMessage('Audio stream resumed');
+      setStatusMessage('Recording resumed');
       timerIntervalRef.current = setInterval(() => {
-        setTimerSeconds(prev => prev + 1);
+        if (startTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
+          );
+          setTimerSeconds(Math.max(0, elapsed));
+        }
       }, 1000);
     } else {
       mediaRecorderRef.current.pause();
+      if (silentAudioRef.current) silentAudioRef.current.pause();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+
+      lastPauseTimestampRef.current = Date.now();
       setIsPaused(true);
-      setStatusMessage('Audio stream paused');
+      setStatusMessage('Recording paused');
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     }
   };
@@ -134,7 +349,15 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
   const stopRecording = () => {
     if (!mediaRecorderRef.current) return;
 
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([50, 50, 50]);
+    }
+
+    setIsStealthMode(false);
+    stopBackgroundAudioAnchor();
+
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     if (speechRecognitionRef.current) {
       try { speechRecognitionRef.current.stop(); } catch (e) {}
     }
@@ -143,7 +366,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       setIsRecording(false);
       setIsPaused(false);
       setIsProcessing(true);
-      setStatusMessage('Transcribing audio recording...');
+      setStatusMessage('Transcribing lecture with Groq Whisper V3...');
 
       const mimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
@@ -180,7 +403,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       }
 
       setLiveTranscript(finalTranscript);
-      setStatusMessage('Generating structured notes and outline...');
+      setStatusMessage('Analyzing transcript and compiling study notes...');
 
       let notesData = null;
       try {
@@ -212,7 +435,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
 
       onSaveNote(newNote);
       setIsProcessing(false);
-      setStatusMessage('Session saved successfully');
+      setStatusMessage('Session saved and compiled successfully');
     };
 
     mediaRecorderRef.current.stop();
@@ -223,22 +446,108 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       backgroundColor: 'var(--bg-surface)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-subtle)',
-      padding: '1.75rem',
+      padding: '1.25rem',
       display: 'flex',
       flexDirection: 'column',
-      gap: '1.25rem'
+      gap: '1.25rem',
+      position: 'relative'
     }}>
-      {/* Top Metadata Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem' }} className="recorder-meta-grid">
-        <div>
-          <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600, letterSpacing: '0.04em' }}>
+      {/* OLED / AMOLED Stealth Blackout Mode (Pure #000000 for 0% display battery use on phones) */}
+      {isStealthMode && isRecording && (
+        <div
+          onDoubleClick={() => setIsStealthMode(false)}
+          onTouchStart={(e) => {
+            // Check double tap
+            const now = Date.now();
+            if (e.currentTarget.lastTap && (now - e.currentTarget.lastTap) < 350) {
+              setIsStealthMode(false);
+            }
+            e.currentTarget.lastTap = now;
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: '#000000',
+            zIndex: 9999,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+            touchAction: 'manipulation',
+            userSelect: 'none'
+          }}
+        >
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1.25rem',
+            opacity: 0.35,
+            transition: 'opacity 0.2s ease'
+          }}>
+            <div style={{
+              width: '18px',
+              height: '18px',
+              borderRadius: '50%',
+              backgroundColor: isPaused ? '#eab308' : '#ef4444',
+              boxShadow: isPaused ? 'none' : '0 0 15px rgba(239, 68, 68, 0.8)'
+            }} />
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '2rem',
+              fontWeight: 700,
+              color: '#ffffff',
+              letterSpacing: '0.08em'
+            }}>
+              {formatTime(timerSeconds)}
+            </div>
+            <div style={{
+              fontSize: '0.8rem',
+              color: '#94a3b8',
+              textAlign: 'center',
+              lineHeight: 1.5,
+              maxWidth: '260px'
+            }}>
+              Screen Off / OLED Stealth Mode<br />
+              <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Double-tap anywhere to restore screen</span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setIsStealthMode(false)}
+            style={{
+              position: 'absolute',
+              bottom: '2.5rem',
+              padding: '0.65rem 1.4rem',
+              borderRadius: '9999px',
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              fontSize: '0.82rem',
+              fontWeight: 600,
+              border: '1px solid #334155'
+            }}
+          >
+            Exit Stealth Screen
+          </button>
+        </div>
+      )}
+
+      {/* Top Metadata Row - Mobile Responsive Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: '0.85rem'
+      }} className="recorder-meta-grid">
+        <div style={{ gridColumn: 'span 2' }}>
+          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
             SESSION TITLE
           </label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Distributed Systems: Consensus Protocols"
+            placeholder="e.g. Molecular Biology: DNA Replication"
             disabled={isRecording}
             style={{
               width: '100%',
@@ -246,14 +555,15 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
               borderRadius: 'var(--radius-sm)',
               backgroundColor: 'var(--bg-input)',
               border: '1px solid var(--border-subtle)',
-              fontSize: '0.88rem',
-              outline: 'none'
+              fontSize: '0.9rem',
+              outline: 'none',
+              color: 'var(--text-main)'
             }}
           />
         </div>
 
         <div>
-          <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600, letterSpacing: '0.04em' }}>
+          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
             SUBJECT
           </label>
           <select
@@ -267,7 +577,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
               backgroundColor: 'var(--bg-input)',
               border: '1px solid var(--border-subtle)',
               fontSize: '0.88rem',
-              outline: 'none'
+              outline: 'none',
+              color: 'var(--text-main)'
             }}
           >
             <option value="Computer Science">Computer Science</option>
@@ -280,8 +591,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
         </div>
 
         <div>
-          <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600, letterSpacing: '0.04em' }}>
-            LANGUAGE LOCALE
+          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
+            AUDIO LANGUAGE
           </label>
           <select
             value={language}
@@ -294,7 +605,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
               backgroundColor: 'var(--bg-input)',
               border: '1px solid var(--border-subtle)',
               fontSize: '0.88rem',
-              outline: 'none'
+              outline: 'none',
+              color: 'var(--text-main)'
             }}
           >
             <option value="en">English</option>
@@ -308,31 +620,33 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
         </div>
       </div>
 
-      {/* Recording Display & Controls */}
+      {/* Recording Display & Controls Card */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '1.25rem 1.5rem',
+        padding: '1.25rem',
         borderRadius: 'var(--radius-md)',
         backgroundColor: 'var(--bg-surface-elevated)',
         border: '1px solid var(--border-subtle)',
         flexWrap: 'wrap',
         gap: '1rem'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        {/* Left: Indicator & Timer */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem' }}>
           <div style={{
-            width: '42px',
-            height: '42px',
+            width: '46px',
+            height: '46px',
             borderRadius: '50%',
             backgroundColor: isRecording ? (isPaused ? 'var(--warning)' : 'var(--danger)') : 'var(--border-subtle)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             color: '#fff',
-            transition: 'background-color 0.2s ease'
+            transition: 'background-color 0.2s ease',
+            flexShrink: 0
           }} className={isRecording && !isPaused ? 'pulsing-rec' : ''}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
               <line x1="12" y1="19" x2="12" y2="23"></line>
@@ -341,17 +655,60 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
           </div>
 
           <div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.45rem', fontWeight: 700, letterSpacing: '0.04em' }}>
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '1.65rem',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              lineHeight: 1.1
+            }}>
               {formatTime(timerSeconds)}
             </div>
-            <div style={{ fontSize: '0.74rem', color: isRecording ? (isPaused ? 'var(--warning)' : 'var(--danger)') : 'var(--text-muted)', fontWeight: 600 }}>
-              {isRecording ? (isPaused ? 'PAUSED' : 'RECORDING') : 'STANDBY'}
+            <div style={{
+              fontSize: '0.72rem',
+              color: isRecording ? (isPaused ? 'var(--warning)' : 'var(--danger)') : 'var(--text-muted)',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              marginTop: '0.2rem'
+            }}>
+              <span>{isRecording ? (isPaused ? 'PAUSED' : 'LIVE RECORDING') : 'READY'}</span>
+              {isRecording && !isPaused && (
+                <span style={{
+                  display: 'inline-block',
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--danger)'
+                }} />
+              )}
             </div>
           </div>
         </div>
 
-        {/* Buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+        {/* Live Audio Level Meter */}
+        {isRecording && !isPaused && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flex: 1, minWidth: '80px', maxWidth: '140px' }}>
+            <div style={{
+              width: '100%',
+              height: '6px',
+              backgroundColor: 'var(--bg-app)',
+              borderRadius: '9999px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.max(10, audioLevel)}%`,
+                backgroundColor: audioLevel > 70 ? 'var(--danger)' : 'var(--primary)',
+                transition: 'width 0.1s ease'
+              }} />
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons (Full mobile touch size) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
           {!isRecording ? (
             <button
               onClick={startRecording}
@@ -359,23 +716,50 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.65rem 1.4rem',
+                gap: '0.55rem',
+                padding: '0.75rem 1.5rem',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: 'var(--danger)',
                 color: '#fff',
-                fontWeight: 600,
-                fontSize: '0.88rem',
+                fontWeight: 700,
+                fontSize: '0.92rem',
+                boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)'
               }}
             >
-              Start Recording
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+              <span>Start Recording</span>
             </button>
           ) : (
             <>
+              {/* Screen Off / Stealth button for mobile battery saving */}
+              <button
+                onClick={() => setIsStealthMode(true)}
+                title="Blackout display to record with screen light off"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-main)',
+                  fontWeight: 600,
+                  fontSize: '0.8rem'
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span>Screen Off</span>
+              </button>
+
               <button
                 onClick={togglePause}
                 style={{
-                  padding: '0.65rem 1.1rem',
+                  padding: '0.65rem 1.05rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--bg-surface)',
                   border: '1px solid var(--border-subtle)',
@@ -408,6 +792,43 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
         </div>
       </div>
 
+      {/* Screen Off & Background Recording Notice */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0.65rem 0.95rem',
+        borderRadius: 'var(--radius-sm)',
+        backgroundColor: 'var(--bg-app)',
+        border: '1px solid var(--border-subtle)',
+        fontSize: '0.76rem',
+        color: 'var(--text-secondary)',
+        flexWrap: 'wrap',
+        gap: '0.5rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+            <line x1="12" y1="18" x2="12.01" y2="18"></line>
+          </svg>
+          <span>
+            {isRecording
+              ? 'Background Audio Active: You can safely turn off phone screen light or switch apps.'
+              : 'Screen-Off Mode Supported: Recording keeps streaming even when phone display is locked.'}
+          </span>
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', color: 'var(--text-muted)' }}>
+          <input
+            type="checkbox"
+            checked={keepScreenAwake}
+            onChange={(e) => setKeepScreenAwake(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          <span>Keep Screen Awake</span>
+        </label>
+      </div>
+
       {/* Status Bar */}
       {(statusMessage || isProcessing) && (
         <div style={{
@@ -416,7 +837,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem',
-          padding: '0.35rem 0.2rem'
+          padding: '0.25rem 0.2rem'
         }}>
           {isProcessing && <div className="spinner" />}
           <span>{statusMessage}</span>
@@ -427,16 +848,16 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en' }) {
       {(isRecording || liveTranscript) && (
         <div style={{
           backgroundColor: 'var(--bg-app)',
-          padding: '1rem',
+          padding: '0.9rem 1rem',
           borderRadius: 'var(--radius-md)',
           border: '1px solid var(--border-subtle)',
-          maxHeight: '150px',
+          maxHeight: '140px',
           overflowY: 'auto'
         }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             Live Speech Feed:
           </div>
-          <p style={{ fontSize: '0.86rem', lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+          <p style={{ fontSize: '0.85rem', lineHeight: 1.6, color: 'var(--text-secondary)' }}>
             {liveTranscript || 'Listening for speech input...'}
           </p>
         </div>

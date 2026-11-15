@@ -8,6 +8,7 @@ import NotesPane from '@/components/NotesPane';
 import StudyDeck from '@/components/StudyDeck';
 import RoadmapPanel from '@/components/RoadmapPanel';
 import AuthModal from '@/components/AuthModal';
+import MobileBottomNav from '@/components/MobileBottomNav';
 import { initialSeedNote } from '@/lib/mockData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
@@ -189,6 +190,13 @@ export default function Home() {
         </main>
       </div>
 
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onOpenSidebar={() => setIsMobileSidebarOpen(true)}
+      />
+
       {/* Auth Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
@@ -198,6 +206,23 @@ export default function Home() {
 
       {/* Global Responsive Mobile Styles */}
       <style jsx global>{`
+        @media (max-width: 768px) {
+          .desktop-nav-tabs {
+            display: none !important;
+          }
+          .mobile-bottom-nav {
+            display: flex !important;
+          }
+          main {
+            padding: 1rem !important;
+            padding-bottom: calc(75px + env(safe-area-inset-bottom, 0px)) !important;
+          }
+        }
+        @media (min-width: 769px) {
+          .mobile-bottom-nav {
+            display: none !important;
+          }
+        }
         @media (max-width: 900px) {
           .study-grid {
             grid-template-columns: 1fr !important;

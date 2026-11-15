@@ -1,0 +1,20 @@
+
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="112" fill="#0F172A"/>
+  <rect x="24" y="24" width="464" height="464" rx="92" stroke="#1E293B" stroke-width="4"/>
+  <circle cx="256" cy="256" r="180" fill="url(#paint0_radial)" opacity="0.6"/>
+  <defs>
+    <radialGradient id="paint0_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 256) rotate(90) scale(180)">
+      <stop stop-color="#3B82F6" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#1D4ED8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Modern Clean Mic + Audio Wave Icon -->
+  <rect x="216" y="140" width="80" height="136" rx="40" fill="#3B82F6"/>
+  <path d="M168 230C168 278.6 207.4 318 256 318C304.6 318 344 278.6 344 230" stroke="#F8FAFC" stroke-width="24" stroke-linecap="round"/>
+  <line x1="256" y1="318" x2="256" y2="376" stroke="#F8FAFC" stroke-width="24" stroke-linecap="round"/>
+  <line x1="208" y1="376" x2="304" y2="376" stroke="#F8FAFC" stroke-width="24" stroke-linecap="round"/>
+  <!-- Subtle waveform accent bars -->
+  <rect x="116" y="220" width="16" height="50" rx="8" fill="#60A5FA" opacity="0.75"/>
+  <rect x="380" y="220" width="16" height="50" rx="8" fill="#60A5FA" opacity="0.75"/>
+</svg>

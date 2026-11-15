@@ -70,8 +70,8 @@ export default function Header({
         </div>
       </div>
 
-      {/* Middle: Tab Navigation */}
-      <nav style={{
+      {/* Middle: Tab Navigation (Desktop) */}
+      <nav className="desktop-nav-tabs" style={{
         display: 'flex',
         alignItems: 'center',
         background: 'var(--bg-app)',
