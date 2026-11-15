@@ -5,6 +5,10 @@ export async function POST(request) {
   try {
     const { messages = [], transcript = '', noteTitle = 'Lecture' } = await request.json();
 
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json({ error: 'At least one message is required.' }, { status: 400 });
+    }
+
     const apiKey = process.env.GROQ_API_KEY;
 
     if (!apiKey) {
