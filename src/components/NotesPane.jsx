@@ -9,6 +9,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
+  const [isRecompiling, setIsRecompiling] = useState(false);
   const [editTitle, setEditTitle] = useState(note?.title || '');
   const [editTag, setEditTag] = useState(note?.tag || 'General Studies');
   const [editSummary, setEditSummary] = useState(note?.notes?.summary || '');
@@ -18,6 +19,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
   if (note?.id !== trackedNoteId) {
     setTrackedNoteId(note?.id);
     setIsEditing(false);
+    setIsRecompiling(false);
     setEditTitle(note?.title || '');
     setEditTag(note?.tag || 'General Studies');
     setEditSummary(note?.notes?.summary || '');
@@ -68,6 +70,45 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
     };
     onUpdateNote(updated);
     setIsEditing(false);
+  };
+
+  const handleReanalyze = async () => {
+    const activeTranscript = isEditing ? editTranscript : transcript;
+    const activeTitle = isEditing ? (editTitle.trim() || 'Untitled Lecture') : title;
+    const activeSubject = isEditing ? (editTag.trim() || 'General Studies') : tag;
+
+    if (!activeTranscript || !activeTranscript.trim() || isRecompiling || !onUpdateNote) return;
+
+    setIsRecompiling(true);
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: activeTranscript,
+          title: activeTitle,
+          subject: activeSubject
+        })
+      });
+
+      if (res.ok) {
+        const compiledNotes = await res.json();
+        const updated = {
+          ...note,
+          title: activeTitle,
+          tag: activeSubject,
+          transcript: activeTranscript,
+          notes: compiledNotes
+        };
+        onUpdateNote(updated);
+        setEditSummary(compiledNotes?.summary || '');
+        setIsEditing(false);
+      }
+    } catch (e) {
+      console.warn('Re-compile analysis error:', e);
+    } finally {
+      setIsRecompiling(false);
+    }
   };
 
   const exportToWord = () => {
@@ -220,7 +261,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           {isEditing ? (
             <>
               <button
@@ -235,6 +276,23 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
                 }}
               >
                 Save Changes
+              </button>
+              <button
+                onClick={handleReanalyze}
+                disabled={isRecompiling}
+                title="Re-synthesize summary, key concepts, outline, and quiz questions from the edited transcript"
+                style={{
+                  padding: '0.45rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--primary)',
+                  color: 'var(--primary)',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  opacity: isRecompiling ? 0.6 : 1
+                }}
+              >
+                {isRecompiling ? 'Re-Compiling...' : 'Re-Compile AI Notes'}
               </button>
               <button
                 onClick={() => setIsEditing(false)}
@@ -254,20 +312,39 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
           ) : (
             <>
               {onUpdateNote && (
-                <button
-                  onClick={startEditing}
-                  style={{
-                    padding: '0.45rem 0.8rem',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--bg-surface-elevated)',
-                    border: '1px solid var(--border-subtle)',
-                    fontSize: '0.8rem',
-                    fontWeight: 500,
-                    color: 'var(--text-main)'
-                  }}
-                >
-                  Edit
-                </button>
+                <>
+                  <button
+                    onClick={startEditing}
+                    style={{
+                      padding: '0.45rem 0.8rem',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      color: 'var(--text-main)'
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={handleReanalyze}
+                    disabled={isRecompiling}
+                    title="Re-run AI synthesis on this lecture transcript"
+                    style={{
+                      padding: '0.45rem 0.8rem',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      color: 'var(--primary)',
+                      opacity: isRecompiling ? 0.6 : 1
+                    }}
+                  >
+                    {isRecompiling ? 'Compiling...' : 'Re-Analyze'}
+                  </button>
+                </>
               )}
 
               <button

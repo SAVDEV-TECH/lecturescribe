@@ -52,6 +52,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const [liveTranscript, setLiveTranscript] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showPasteBox, setShowPasteBox] = useState(false);
+  const [pastedText, setPastedText] = useState('');
 
   // Mobile background & stealth screen-off state
   const [isStealthMode, setIsStealthMode] = useState(false);
@@ -87,6 +89,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       setLiveTranscript('');
       setStatusMessage('');
       setTimerSeconds(0);
+      setShowPasteBox(false);
+      setPastedText('');
     }
   }
 
@@ -536,8 +540,52 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     );
   };
 
+  const handleCompilePastedText = async () => {
+    const cleanText = pastedText.trim();
+    if (!cleanText || isProcessing) return;
+
+    const effectiveTitle = title.trim() || `Lecture on ${subject}`;
+    setIsProcessing(true);
+    setLiveTranscript(cleanText);
+    setStatusMessage('Analyzing transcript and compiling study notes...');
+
+    let notesData = null;
+    try {
+      const analyzeRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: cleanText,
+          title: effectiveTitle,
+          subject: subject
+        })
+      });
+
+      if (analyzeRes.ok) {
+        notesData = await analyzeRes.json();
+      }
+    } catch (err) {
+      console.error('Analysis error:', err);
+    }
+
+    const newNote = {
+      id: 'lecture_' + Date.now(),
+      title: effectiveTitle,
+      tag: subject,
+      timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      transcript: cleanText,
+      notes: notesData
+    };
+
+    onSaveNote(newNote);
+    setIsProcessing(false);
+    setShowPasteBox(false);
+    setPastedText('');
+    setStatusMessage('Session saved and compiled successfully');
+  };
+
   return (
-    <div style={{
+    <div className="no-print" style={{
       backgroundColor: 'var(--bg-surface)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-subtle)',
@@ -816,6 +864,34 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
             <>
               <button
                 type="button"
+                onClick={() => setShowPasteBox(!showPasteBox)}
+                disabled={isProcessing}
+                title="Paste lecture slides, textbook excerpts, or raw text to compile AI study notes"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: showPasteBox ? 'var(--primary)' : 'var(--bg-surface)',
+                  border: '1px solid ' + (showPasteBox ? 'var(--primary)' : 'var(--border-subtle)'),
+                  color: showPasteBox ? '#fff' : 'var(--text-main)',
+                  fontWeight: 600,
+                  fontSize: '0.84rem',
+                  opacity: isProcessing ? 0.6 : 1
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                <span>Paste Text</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
                 title="Upload a pre-recorded lecture audio file (MP3, WAV, M4A, WebM)"
@@ -924,6 +1000,68 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           )}
         </div>
       </div>
+
+      {/* Collapsible Paste Lecture Text / Slides Drawer */}
+      {showPasteBox && !isRecording && (
+        <div style={{
+          padding: '1rem',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'var(--bg-app)',
+          border: '1px solid var(--border-subtle)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Paste Lecture Transcript, Handout, or Slide Notes
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowPasteBox(false)}
+              style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
+            >
+              Close
+            </button>
+          </div>
+          <textarea
+            value={pastedText}
+            onChange={(e) => setPastedText(e.target.value)}
+            placeholder="Paste raw lecture text, syllabus notes, or slide contents here to generate structured summaries, key terminology, and active-recall flashcards..."
+            rows={5}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-input)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '0.85rem',
+              lineHeight: 1.6,
+              color: 'var(--text-main)',
+              outline: 'none',
+              resize: 'vertical'
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={handleCompilePastedText}
+              disabled={isProcessing || !pastedText.trim()}
+              style={{
+                padding: '0.6rem 1.2rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--primary)',
+                color: '#fff',
+                fontSize: '0.84rem',
+                fontWeight: 600,
+                opacity: isProcessing || !pastedText.trim() ? 0.6 : 1
+              }}
+            >
+              {isProcessing ? 'Compiling...' : 'Compile Study Notes'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Screen Off & Background Recording Notice */}
       <div style={{

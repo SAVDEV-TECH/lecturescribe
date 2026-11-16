@@ -3,45 +3,45 @@
 export default function RoadmapPanel({ onTryFeature }) {
   const features = [
     {
-      title: 'Whisper Speech Pipeline',
+      title: 'Multi-Source Audio & Text Capture',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'High-speed audio transcription powered by Whisper Large V3 Turbo. Supports continuous recording with automatic silence handling and multi-dialect English recognition.',
+      desc: 'Live microphone recording with 32 kbps speech compression, pre-recorded audio file upload (.mp3, .wav, .m4a, .webm), and raw text/slide paste mode with multi-dialect recognition (including Nigerian Pidgin, Igbo, and Yoruba).',
       action: () => onTryFeature('workspace')
     },
     {
       title: 'Structured Note Synthesizer',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Transforms raw spoken transcripts into concise executive summaries, categorized glossaries of key terms, chronological lecture outlines, and review prompts.',
+      desc: 'Transforms raw transcripts into executive summaries, categorized key-term glossaries, chronological outlines, and self-assessment prompts—with full inline editing and one-click AI re-analysis.',
       action: () => onTryFeature('workspace')
     },
     {
       title: 'Active-Recall Flashcards',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Generates flipping flashcards from lecture definitions and quiz questions to empower spaced repetition and active recall study.',
+      desc: 'Generates interactive 3D flipping flashcards from lecture definitions and quiz questions with keyboard navigation (Arrow keys + Spacebar) and per-card mastery tracking.',
       action: () => onTryFeature('study')
     },
     {
       title: 'Interactive Lecture Assistant',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'A conversational assistant grounded in the lecture transcript. Students can ask for clarifications, quizzes, or step-by-step concept explanations.',
+      desc: 'A conversational AI tutor grounded in the active lecture transcript. Students can ask for clarifications, practice quizzes, or step-by-step concept breakdowns.',
       action: () => onTryFeature('study')
     },
     {
-      title: 'Database Cloud Sync',
+      title: 'Cloud Sync & Session Library',
       badge: 'Integrated',
       color: 'var(--primary)',
-      desc: 'Cloud persistence for user notes with Row Level Security (RLS) policies. Includes an automatic guest mode fallback using local storage when offline.',
+      desc: 'Supabase PostgreSQL persistence with Row Level Security (RLS), instant full-text search, subject tag filters, session deletion, and automatic local storage fallback when offline.',
       action: () => onTryFeature('workspace')
     },
     {
-      title: 'Document Exporting',
+      title: 'Screen-Off PWA & Document Export',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'One-click export to formatted Microsoft Word (.doc) and printable PDF layouts for printing or studying on any device.',
+      desc: 'Installable Progressive Web App with Wake Lock + MediaSession background recording, OLED stealth battery-saver overlay, Microsoft Word (.doc) export, print-optimized PDF stylesheets, and deep-link sharing.',
       action: () => onTryFeature('workspace')
     }
   ];
@@ -61,7 +61,7 @@ export default function RoadmapPanel({ onTryFeature }) {
           System Capabilities & Technical Overview
         </h2>
         <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)' }}>
-          Powered by Next.js 14 App Router, Groq Whisper Large V3, high-throughput inference, and PostgreSQL.
+          Powered by Next.js App Router, Groq Whisper Large V3 Turbo, Llama 3.3 70B high-throughput inference, and Supabase PostgreSQL.
         </p>
       </div>
 

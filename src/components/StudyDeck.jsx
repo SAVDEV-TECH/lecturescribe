@@ -6,6 +6,7 @@ export default function StudyDeck({ note }) {
   const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [masteredIndices, setMasteredIndices] = useState([]);
 
   // Assistant state
   const [messages, setMessages] = useState([
@@ -22,6 +23,7 @@ export default function StudyDeck({ note }) {
     setTrackedNoteId(note?.id);
     setCurrentCardIndex(0);
     setIsFlipped(false);
+    setMasteredIndices([]);
     setInputMessage('');
     setMessages([
       {
@@ -94,7 +96,26 @@ export default function StudyDeck({ note }) {
     );
   }
 
-  const currentCard = flashcards[currentCardIndex % flashcards.length];
+  const activeIndex = currentCardIndex % flashcards.length;
+  const currentCard = flashcards[activeIndex];
+  const isCurrentMastered = masteredIndices.includes(activeIndex);
+
+  const toggleMastered = () => {
+    setMasteredIndices(prev =>
+      prev.includes(activeIndex)
+        ? prev.filter(i => i !== activeIndex)
+        : [...prev, activeIndex]
+    );
+  };
+
+  const handleResetChat = () => {
+    setMessages([
+      {
+        sender: 'assistant',
+        text: `Welcome. I am ready to answer questions about "${note?.title || 'this session'}", generate practice prompts, or clarify terminology.`
+      }
+    ]);
+  };
 
   const nextCard = () => {
     setIsFlipped(false);
@@ -153,14 +174,27 @@ export default function StudyDeck({ note }) {
         minHeight: '440px'
       }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Review Flashcards</h2>
-              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Click card to reveal definition or answer</p>
+              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Click card or press Space to flip · Arrow keys to navigate</p>
             </div>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-              {currentCardIndex + 1} / {flashcards.length}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <span style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '0.2rem 0.55rem',
+                borderRadius: '4px',
+                backgroundColor: masteredIndices.length === flashcards.length ? 'var(--success-soft)' : 'var(--bg-surface-elevated)',
+                color: masteredIndices.length === flashcards.length ? 'var(--success)' : 'var(--text-secondary)',
+                border: '1px solid var(--border-subtle)'
+              }}>
+                Mastered: {masteredIndices.length} / {flashcards.length}
+              </span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                {activeIndex + 1} / {flashcards.length}
+              </span>
+            </div>
           </div>
 
           {/* Interactive Flip Card */}
@@ -180,7 +214,7 @@ export default function StudyDeck({ note }) {
                   color: 'var(--primary)',
                   marginBottom: '1rem'
                 }}>
-                  {currentCard.type}
+                  {currentCard.type} {isCurrentMastered ? '· ✓ Mastered' : ''}
                 </span>
                 <div style={{ fontSize: '1.15rem', fontWeight: 700, lineHeight: 1.4, color: 'var(--text-main)', textAlign: 'center' }}>
                   {currentCard.front}
@@ -214,15 +248,15 @@ export default function StudyDeck({ note }) {
         </div>
 
         {/* Card Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1.5rem' }}>
           <button
             onClick={prevCard}
             style={{
-              padding: '0.6rem 1.15rem',
+              padding: '0.6rem 1rem',
               borderRadius: 'var(--radius-sm)',
               backgroundColor: 'var(--bg-surface-elevated)',
               border: '1px solid var(--border-subtle)',
-              fontSize: '0.84rem',
+              fontSize: '0.82rem',
               fontWeight: 500,
               color: 'var(--text-main)'
             }}
@@ -230,29 +264,45 @@ export default function StudyDeck({ note }) {
             Previous
           </button>
 
-          <button
-            onClick={() => setIsFlipped(!isFlipped)}
-            style={{
-              padding: '0.6rem 1.15rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.84rem',
-              fontWeight: 500,
-              color: 'var(--primary)'
-            }}
-          >
-            Flip Card
-          </button>
+          <div style={{ display: 'flex', gap: '0.45rem' }}>
+            <button
+              onClick={() => setIsFlipped(!isFlipped)}
+              style={{
+                padding: '0.6rem 0.95rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-surface-elevated)',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '0.82rem',
+                fontWeight: 500,
+                color: 'var(--primary)'
+              }}
+            >
+              Flip Card
+            </button>
+            <button
+              onClick={toggleMastered}
+              style={{
+                padding: '0.6rem 0.95rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: isCurrentMastered ? 'var(--success-soft)' : 'var(--bg-surface-elevated)',
+                border: `1px solid ${isCurrentMastered ? 'var(--success)' : 'var(--border-subtle)'}`,
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                color: isCurrentMastered ? 'var(--success)' : 'var(--text-secondary)'
+              }}
+            >
+              {isCurrentMastered ? '✓ Mastered' : 'Mark Mastered'}
+            </button>
+          </div>
 
           <button
             onClick={nextCard}
             style={{
-              padding: '0.6rem 1.15rem',
+              padding: '0.6rem 1rem',
               borderRadius: 'var(--radius-sm)',
               backgroundColor: 'var(--primary)',
               color: '#fff',
-              fontSize: '0.84rem',
+              fontSize: '0.82rem',
               fontWeight: 600
             }}
           >
@@ -271,13 +321,39 @@ export default function StudyDeck({ note }) {
         flexDirection: 'column',
         height: '520px'
       }}>
-        <div style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.85rem', marginBottom: '0.85rem' }}>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>
-            Lecture Assistant
-          </h2>
-          <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-            Ask questions regarding topics covered in this session
-          </p>
+        <div style={{
+          borderBottom: '1px solid var(--border-subtle)',
+          paddingBottom: '0.85rem',
+          marginBottom: '0.85rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '0.5rem'
+        }}>
+          <div>
+            <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>
+              Lecture Assistant
+            </h2>
+            <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              Ask questions regarding topics covered in this session
+            </p>
+          </div>
+          {messages.length > 1 && (
+            <button
+              onClick={handleResetChat}
+              style={{
+                fontSize: '0.72rem',
+                padding: '0.3rem 0.6rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-surface-elevated)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-secondary)',
+                fontWeight: 500
+              }}
+            >
+              Reset Chat
+            </button>
+          )}
         </div>
 
         {/* Quick prompt pills */}

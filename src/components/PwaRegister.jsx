@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 
 export default function PwaRegister() {
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -71,7 +72,7 @@ export default function PwaRegister() {
   if (isInstalled || !showBanner) return null;
 
   return (
-    <div style={{
+    <div className="no-print" style={{
       position: 'fixed',
       bottom: 'calc(4.75rem + env(safe-area-inset-bottom, 0px))',
       left: '1rem',
@@ -90,7 +91,7 @@ export default function PwaRegister() {
       boxShadow: '0 12px 30px rgba(0, 0, 0, 0.45)'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        <img src="/icon-192.png" alt="LectureScribe" style={{ width: '38px', height: '38px', borderRadius: '8px' }} />
+        <Image src="/icon-192.png" alt="LectureScribe" width={38} height={38} style={{ borderRadius: '8px' }} />
         <div>
           <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--text-main)' }}>Install LectureScribe</div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Add to home screen for fullscreen mobile use</div>

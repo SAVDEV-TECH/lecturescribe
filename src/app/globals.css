@@ -161,3 +161,39 @@ input, select, textarea {
   transform: rotateY(180deg);
   background: var(--bg-surface-elevated);
 }
+
+/* Print / PDF Export Styles */
+@media print {
+  :root,
+  [data-theme='dark'],
+  [data-theme='light'] {
+    --bg-app: #ffffff !important;
+    --bg-surface: #ffffff !important;
+    --bg-surface-elevated: #f8fafc !important;
+    --text-main: #0f172a !important;
+    --text-secondary: #334155 !important;
+    --text-muted: #64748b !important;
+    --border-subtle: #cbd5e1 !important;
+    --border-strong: #94a3b8 !important;
+  }
+
+  header,
+  .app-sidebar,
+  .mobile-bottom-nav,
+  .no-print {
+    display: none !important;
+  }
+
+  body,
+  main {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  details {
+    open: true;
+  }
+}
