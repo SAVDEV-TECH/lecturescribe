@@ -21,6 +21,14 @@ export default function Home() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [recorderResetSignal, setRecorderResetSignal] = useState(0);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(prev => (prev === msg ? '' : prev));
+    }, 2800);
+  };
 
   // Sync notes from Supabase
   const loadSupabaseNotes = async (requestedNoteId) => {
@@ -151,6 +159,7 @@ export default function Home() {
     setNotes(updatedNotes);
     setActiveNoteId(savedNote.id);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+    showToast(`Saved "${savedNote.title}"`);
   };
 
   // Handle Update Note (Edit Title, Tag, Summary, Transcript)
@@ -158,6 +167,7 @@ export default function Home() {
     const updatedNotes = notes.map(n => (n.id === updatedNote.id ? updatedNote : n));
     setNotes(updatedNotes);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+    showToast('Lecture notes updated');
 
     if (isSupabaseConfigured() && user) {
       try {
@@ -181,6 +191,7 @@ export default function Home() {
     const remainingNotes = notes.filter(n => n.id !== noteId);
     setNotes(remainingNotes);
     localStorage.setItem('ls_notes', JSON.stringify(remainingNotes));
+    showToast('Session removed');
 
     if (activeNoteId === noteId) {
       setActiveNoteId(remainingNotes[0]?.id || null);
@@ -214,7 +225,7 @@ export default function Home() {
   const activeNote = notes.find(n => n.id === activeNoteId) || notes[0] || null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: 'var(--bg-app)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'hidden', backgroundColor: 'var(--bg-app)' }}>
       {/* Header */}
       <Header
         activeTab={activeTab}
@@ -226,8 +237,28 @@ export default function Home() {
         user={user}
       />
 
+      {/* Toast Feedback Banner */}
+      {toastMessage && (
+        <div className="no-print" style={{
+          position: 'fixed',
+          top: '4.25rem',
+          right: '1rem',
+          zIndex: 80,
+          backgroundColor: 'var(--bg-surface-elevated)',
+          border: '1px solid var(--primary)',
+          color: 'var(--text-main)',
+          padding: '0.55rem 0.95rem',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '0.8rem',
+          fontWeight: 600,
+          boxShadow: '0 8px 20px rgba(0, 0, 0, 0.35)'
+        }}>
+          ✓ {toastMessage}
+        </div>
+      )}
+
       {/* Main Body */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', width: '100%' }}>
         {/* Left Sidebar */}
         <Sidebar
           notes={notes}
@@ -243,7 +274,66 @@ export default function Home() {
         />
 
         {/* Content Area */}
-        <main style={{ flex: 1, padding: '1.5rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <main style={{ flex: 1, minWidth: 0, maxWidth: '100%', padding: '1.5rem', overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Mobile Quick Session Switcher Bar */}
+          {activeTab !== 'roadmap' && notes.length > 0 && (
+            <div className="mobile-only-flex no-print" style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.5rem',
+              padding: '0.6rem 0.85rem',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>
+                  Session:
+                </span>
+                <select
+                  value={activeNote?.id || ''}
+                  onChange={(e) => setActiveNoteId(e.target.value)}
+                  aria-label="Select active lecture session"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: '0.35rem 0.55rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    color: 'var(--text-main)',
+                    outline: 'none'
+                  }}
+                >
+                  {notes.map(n => (
+                    <option key={n.id} value={n.id}>
+                      {n.title || 'Untitled'} ({n.tag || 'General'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileSidebarOpen(true)}
+                style={{
+                  padding: '0.35rem 0.65rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--primary)',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  flexShrink: 0
+                }}
+              >
+                All ({notes.length})
+              </button>
+            </div>
+          )}
+
           {activeTab === 'workspace' && (
             <>
               <Recorder onSaveNote={handleSaveNote} resetSignal={recorderResetSignal} />
@@ -251,6 +341,10 @@ export default function Home() {
                 note={activeNote}
                 onUpdateNote={handleUpdateNote}
                 onDeleteNote={handleDeleteNote}
+                onOpenStudy={() => {
+                  setActiveTab('study');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
               />
             </>
           )}
@@ -278,51 +372,6 @@ export default function Home() {
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={(u) => setUser(u)}
       />
-
-      {/* Global Responsive Mobile Styles */}
-      <style jsx global>{`
-        @media (max-width: 768px) {
-          .desktop-nav-tabs {
-            display: none !important;
-          }
-          .mobile-bottom-nav {
-            display: flex !important;
-          }
-          main {
-            padding: 1rem !important;
-            padding-bottom: calc(75px + env(safe-area-inset-bottom, 0px)) !important;
-          }
-        }
-        @media (min-width: 769px) {
-          .mobile-bottom-nav {
-            display: none !important;
-          }
-        }
-        @media (max-width: 900px) {
-          .study-grid {
-            grid-template-columns: 1fr !important;
-          }
-          .recorder-meta-grid {
-            grid-template-columns: 1fr !important;
-          }
-          .app-sidebar {
-            position: fixed !important;
-            top: 0;
-            bottom: 0;
-            left: 0;
-            transform: translateX(-100%);
-            box-shadow: 10px 0 25px rgba(0, 0, 0, 0.4);
-          }
-          .sidebar-open {
-            transform: translateX(0) !important;
-          }
-        }
-        @media (min-width: 901px) {
-          .mobile-only-btn {
-            display: none !important;
-          }
-        }
-      `}</style>
     </div>
   );
 }

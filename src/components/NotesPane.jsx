@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
+export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStudy }) {
   const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [revealAllAnswers, setRevealAllAnswers] = useState(false);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -20,15 +22,25 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
     setTrackedNoteId(note?.id);
     setIsEditing(false);
     setIsRecompiling(false);
+    setIsSpeaking(false);
+    setRevealAllAnswers(false);
     setEditTitle(note?.title || '');
     setEditTag(note?.tag || 'General Studies');
     setEditSummary(note?.notes?.summary || '');
     setEditTranscript(note?.transcript || '');
   }
 
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [trackedNoteId]);
+
   if (!note) {
     return (
-      <div style={{
+      <div className="surface-card" style={{
         padding: '3rem',
         textAlign: 'center',
         color: 'var(--text-muted)',
@@ -43,6 +55,27 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
   }
 
   const { title, tag, timestamp, transcript, notes } = note;
+  const totalFlashcardsCount =
+    (notes?.keyConcepts?.length || 0) + (notes?.quizQuestions?.length || 0) || 1;
+
+  const toggleReadSummary = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    const textToSpeak = `${title}. Executive Summary: ${notes?.summary || 'No summary compiled yet.'}`;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.rate = 1.0;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const startEditing = () => {
     setEditTitle(title || '');
@@ -172,7 +205,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
   };
 
   return (
-    <div style={{
+    <div className="surface-card" style={{
       backgroundColor: 'var(--bg-surface)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-subtle)',
@@ -191,7 +224,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
         borderBottom: '1px solid var(--border-subtle)',
         paddingBottom: '1.25rem'
       }}>
-        <div style={{ flex: 1, minWidth: '240px' }}>
+        <div style={{ flex: 1, minWidth: 'min(100%, 220px)' }}>
           {isEditing ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -238,7 +271,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
                 <span style={{
                   fontSize: '0.74rem',
                   fontWeight: 600,
@@ -253,7 +286,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{timestamp}</span>
               </div>
 
-              <h2 style={{ fontSize: '1.3rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.3 }}>
                 {title}
               </h2>
             </>
@@ -261,7 +294,25 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
         </div>
 
         {/* Action Buttons */}
-        <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="no-print notes-action-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+          {!isEditing && onOpenStudy && (
+            <button
+              onClick={onOpenStudy}
+              style={{
+                padding: '0.45rem 0.85rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--primary)',
+                color: '#fff',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem'
+              }}
+            >
+              <span>Study Deck ({totalFlashcardsCount})</span>
+            </button>
+          )}
           {isEditing ? (
             <>
               <button
@@ -425,9 +476,32 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
 
       {/* Executive Summary */}
       <section>
-        <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
-          Executive Summary
-        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+          <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
+            Executive Summary
+          </h3>
+          {!isEditing && (
+            <button
+              type="button"
+              onClick={toggleReadSummary}
+              className="no-print"
+              style={{
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                padding: '0.22rem 0.6rem',
+                borderRadius: '4px',
+                backgroundColor: isSpeaking ? 'var(--primary)' : 'var(--bg-surface-elevated)',
+                color: isSpeaking ? '#fff' : 'var(--primary)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem'
+              }}
+            >
+              <span>{isSpeaking ? '⏹ Stop Audio' : '🔊 Listen to Summary'}</span>
+            </button>
+          )}
+        </div>
         {isEditing ? (
           <textarea
             value={editSummary}
@@ -459,7 +533,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
           <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
             Key Terminology & Definitions
           </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))', gap: '0.75rem' }}>
             {notes.keyConcepts.map((item, idx) => (
               <div
                 key={idx}
@@ -501,13 +575,28 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote }) {
       {/* Review Questions */}
       {notes?.quizQuestions && notes.quizQuestions.length > 0 && (
         <section>
-          <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.7rem' }}>
-            Review Questions
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.7rem', flexWrap: 'wrap' }}>
+            <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
+              Review Questions
+            </h3>
+            <button
+              type="button"
+              onClick={() => setRevealAllAnswers(!revealAllAnswers)}
+              className="no-print"
+              style={{
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                color: 'var(--primary)'
+              }}
+            >
+              {revealAllAnswers ? 'Hide All Answers' : 'Reveal All Answers'}
+            </button>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
             {notes.quizQuestions.map((q, idx) => (
               <details
-                key={idx}
+                key={`${idx}-${revealAllAnswers}`}
+                open={revealAllAnswers ? true : undefined}
                 style={{
                   padding: '0.75rem 0.95rem',
                   borderRadius: 'var(--radius-sm)',

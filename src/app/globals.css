@@ -150,16 +150,117 @@ input, select, textarea {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 2rem;
+  padding: 1.5rem;
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 
 .flip-card-back {
   transform: rotateY(180deg);
   background: var(--bg-surface-elevated);
+}
+
+/* Prevent flex and grid children from overflowing mobile viewports */
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+main, section, aside, header, div {
+  min-width: 0;
+}
+
+p, h1, h2, h3, h4, li, summary, span {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Responsive Layout & Mobile Adjustments */
+@media (max-width: 900px) {
+  .study-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .recorder-meta-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .recorder-title-col {
+    grid-column: span 1 !important;
+  }
+  .app-sidebar {
+    position: fixed !important;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    transform: translateX(-100%);
+    box-shadow: 10px 0 25px rgba(0, 0, 0, 0.4);
+  }
+  .sidebar-open {
+    transform: translateX(0) !important;
+  }
+}
+
+@media (min-width: 901px) {
+  .mobile-only-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .desktop-nav-tabs {
+    display: none !important;
+  }
+  .mobile-bottom-nav {
+    display: flex !important;
+  }
+  .app-header {
+    padding: 0.65rem 0.9rem !important;
+  }
+  .hide-on-mobile {
+    display: none !important;
+  }
+  main {
+    padding: 0.85rem !important;
+    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px)) !important;
+    gap: 1rem !important;
+  }
+  .surface-card {
+    padding: 1.1rem !important;
+    border-radius: var(--radius-md) !important;
+  }
+  .recorder-controls-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .recorder-action-group {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.5rem !important;
+  }
+  .recorder-primary-btn {
+    grid-column: span 2 !important;
+    justify-content: center !important;
+  }
+  .notes-action-toolbar {
+    width: 100% !important;
+  }
+  .notes-action-toolbar > button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-bottom-nav {
+    display: none !important;
+  }
+  .mobile-only-flex {
+    display: none !important;
+  }
 }
 
 /* Print / PDF Export Styles */

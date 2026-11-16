@@ -10,7 +10,7 @@ export default function Header({
   user 
 }) {
   return (
-    <header style={{
+    <header className="app-header" style={{
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -20,9 +20,10 @@ export default function Header({
       position: 'sticky',
       top: 0,
       zIndex: 30,
+      gap: '0.5rem'
     }}>
       {/* Left: Mobile menu toggle & Brand */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', minWidth: 0 }}>
         <button
           onClick={onOpenMobileSidebar}
           aria-label="Toggle menu"
@@ -35,7 +36,8 @@ export default function Header({
             borderRadius: 'var(--radius-sm)',
             border: '1px solid var(--border-subtle)',
             color: 'var(--text-main)',
-            fontSize: '1rem'
+            fontSize: '1rem',
+            flexShrink: 0
           }}
           className="mobile-only-btn"
         >
@@ -46,7 +48,7 @@ export default function Header({
           </svg>
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', minWidth: 0 }}>
           <div style={{
             width: '28px',
             height: '28px',
@@ -58,12 +60,13 @@ export default function Header({
             color: '#fff',
             fontWeight: 700,
             fontSize: '0.82rem',
-            letterSpacing: '0.05em'
+            letterSpacing: '0.05em',
+            flexShrink: 0
           }}>
             LS
           </div>
-          <div>
-            <h1 style={{ fontSize: '0.98rem', fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ fontSize: '0.96rem', fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               LectureScribe
             </h1>
           </div>
@@ -106,7 +109,7 @@ export default function Header({
       </nav>
 
       {/* Right: Theme Toggle & User Auth */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
         <button
           onClick={toggleTheme}
           title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
@@ -140,22 +143,23 @@ export default function Header({
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
             </svg>
           )}
-          <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+          <span className="hide-on-mobile">{theme === 'dark' ? 'Light' : 'Dark'}</span>
         </button>
 
         <button
           onClick={onOpenAuthModal}
           style={{
-            padding: '0.45rem 0.95rem',
+            padding: '0.45rem 0.75rem',
             borderRadius: 'var(--radius-sm)',
             backgroundColor: user ? 'var(--bg-surface-elevated)' : 'var(--primary)',
             color: user ? 'var(--text-main)' : '#fff',
-            fontSize: '0.84rem',
+            fontSize: '0.82rem',
             fontWeight: 600,
             border: '1px solid ' + (user ? 'var(--border-subtle)' : 'var(--primary)'),
             display: 'flex',
             alignItems: 'center',
-            gap: '0.5rem'
+            gap: '0.45rem',
+            maxWidth: '150px'
           }}
         >
           {user ? (
@@ -165,9 +169,12 @@ export default function Header({
                 height: '7px',
                 borderRadius: '50%',
                 backgroundColor: 'var(--success)',
-                display: 'inline-block'
+                display: 'inline-block',
+                flexShrink: 0
               }}></span>
-              <span>{user.email?.split('@')[0]}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user.email?.split('@')[0]}
+              </span>
             </>
           ) : (
             'Sign In'

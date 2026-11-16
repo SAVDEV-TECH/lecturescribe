@@ -585,7 +585,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   };
 
   return (
-    <div className="no-print" style={{
+    <div className="no-print surface-card" style={{
       backgroundColor: 'var(--bg-surface)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-subtle)',
@@ -682,7 +682,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
         gap: '0.85rem'
       }} className="recorder-meta-grid">
-        <div style={{ gridColumn: 'span 2' }}>
+        <div className="recorder-title-col" style={{ gridColumn: 'span 2' }}>
           <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
             SESSION TITLE
           </label>
@@ -765,11 +765,11 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       </div>
 
       {/* Recording Display & Controls Card */}
-      <div style={{
+      <div className="recorder-controls-row" style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '1.25rem',
+        padding: '1.1rem',
         borderRadius: 'var(--radius-md)',
         backgroundColor: 'var(--bg-surface-elevated)',
         border: '1px solid var(--border-subtle)',
@@ -852,7 +852,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         )}
 
         {/* Action Buttons (Full mobile touch size) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+        <div className="recorder-action-group" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
           <input
             ref={fileInputRef}
             type="file"
@@ -870,8 +870,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '0.45rem',
-                  padding: '0.75rem 1rem',
+                  padding: '0.7rem 0.95rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: showPasteBox ? 'var(--primary)' : 'var(--bg-surface)',
                   border: '1px solid ' + (showPasteBox ? 'var(--primary)' : 'var(--border-subtle)'),
@@ -898,14 +899,15 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '0.45rem',
-                  padding: '0.75rem 1.1rem',
+                  padding: '0.7rem 0.95rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--bg-surface)',
                   border: '1px solid var(--border-subtle)',
                   color: 'var(--text-main)',
                   fontWeight: 600,
-                  fontSize: '0.86rem',
+                  fontSize: '0.84rem',
                   opacity: isProcessing ? 0.6 : 1
                 }}
               >
@@ -920,16 +922,18 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               <button
                 onClick={startRecording}
                 disabled={isProcessing}
+                className="recorder-primary-btn"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '0.55rem',
-                  padding: '0.75rem 1.5rem',
+                  padding: '0.75rem 1.4rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--danger)',
                   color: '#fff',
                   fontWeight: 700,
-                  fontSize: '0.92rem',
+                  fontSize: '0.9rem',
                   boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
                   opacity: isProcessing ? 0.6 : 1
                 }}
@@ -949,6 +953,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '0.4rem',
                   padding: '0.65rem 0.85rem',
                   borderRadius: 'var(--radius-sm)',
@@ -968,6 +973,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               <button
                 onClick={togglePause}
                 style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   padding: '0.65rem 1.05rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--bg-surface)',
@@ -982,11 +990,13 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
               <button
                 onClick={stopRecording}
+                className="recorder-primary-btn"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '0.5rem',
-                  padding: '0.65rem 1.3rem',
+                  padding: '0.7rem 1.3rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--primary)',
                   color: '#fff',

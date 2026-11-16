@@ -47,7 +47,7 @@ export default function RoadmapPanel({ onTryFeature }) {
   ];
 
   return (
-    <div style={{
+    <div className="surface-card" style={{
       backgroundColor: 'var(--bg-surface)',
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border-subtle)',
@@ -65,7 +65,7 @@ export default function RoadmapPanel({ onTryFeature }) {
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: '1rem' }}>
         {features.map((feat, idx) => (
           <div
             key={idx}

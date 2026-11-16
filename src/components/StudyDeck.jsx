@@ -160,10 +160,19 @@ export default function StudyDeck({ note }) {
     }
   };
 
+  const speakCurrentCard = (e) => {
+    e.stopPropagation();
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const text = isFlipped ? currentCard.back : currentCard.front;
+    const utterance = new SpeechSynthesisUtterance(text);
+    window.speechSynthesis.speak(utterance);
+  };
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }} className="study-grid">
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: '1.5rem' }} className="study-grid">
       {/* LEFT: Flashcards */}
-      <div style={{
+      <div className="surface-card" style={{
         backgroundColor: 'var(--bg-surface)',
         borderRadius: 'var(--radius-lg)',
         border: '1px solid var(--border-subtle)',
@@ -171,15 +180,31 @@ export default function StudyDeck({ note }) {
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        minHeight: '440px'
+        minHeight: '420px'
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Review Flashcards</h2>
-              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Click card or press Space to flip · Arrow keys to navigate</p>
+              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Tap card or press Space to flip · Arrow keys to navigate</p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={speakCurrentCard}
+                title="Read current flashcard side aloud"
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  padding: '0.2rem 0.55rem',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  color: 'var(--primary)',
+                  border: '1px solid var(--border-subtle)'
+                }}
+              >
+                🔊 Listen
+              </button>
               <span style={{
                 fontSize: '0.72rem',
                 fontWeight: 600,
@@ -212,15 +237,15 @@ export default function StudyDeck({ note }) {
                   textTransform: 'uppercase',
                   letterSpacing: '0.06em',
                   color: 'var(--primary)',
-                  marginBottom: '1rem'
+                  marginBottom: '0.75rem'
                 }}>
                   {currentCard.type} {isCurrentMastered ? '· ✓ Mastered' : ''}
                 </span>
-                <div style={{ fontSize: '1.15rem', fontWeight: 700, lineHeight: 1.4, color: 'var(--text-main)', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.08rem', fontWeight: 700, lineHeight: 1.4, color: 'var(--text-main)', textAlign: 'center' }}>
                   {currentCard.front}
                 </div>
-                <div style={{ marginTop: '1.5rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  Click to reveal answer
+                <div style={{ marginTop: '1.25rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                  Tap to reveal answer
                 </div>
               </div>
 
@@ -232,15 +257,15 @@ export default function StudyDeck({ note }) {
                   textTransform: 'uppercase',
                   letterSpacing: '0.06em',
                   color: 'var(--success)',
-                  marginBottom: '1rem'
+                  marginBottom: '0.75rem'
                 }}>
                   Answer & Explanation
                 </span>
-                <div style={{ fontSize: '0.9rem', lineHeight: 1.6, color: 'var(--text-main)', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-main)', textAlign: 'center' }}>
                   {currentCard.back}
                 </div>
-                <div style={{ marginTop: '1.5rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  Click to flip back
+                <div style={{ marginTop: '1.25rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                  Tap to flip back
                 </div>
               </div>
             </div>
@@ -252,7 +277,7 @@ export default function StudyDeck({ note }) {
           <button
             onClick={prevCard}
             style={{
-              padding: '0.6rem 1rem',
+              padding: '0.6rem 0.9rem',
               borderRadius: 'var(--radius-sm)',
               backgroundColor: 'var(--bg-surface-elevated)',
               border: '1px solid var(--border-subtle)',
@@ -264,11 +289,11 @@ export default function StudyDeck({ note }) {
             Previous
           </button>
 
-          <div style={{ display: 'flex', gap: '0.45rem' }}>
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center' }}>
             <button
               onClick={() => setIsFlipped(!isFlipped)}
               style={{
-                padding: '0.6rem 0.95rem',
+                padding: '0.6rem 0.9rem',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: 'var(--bg-surface-elevated)',
                 border: '1px solid var(--border-subtle)',
@@ -282,7 +307,7 @@ export default function StudyDeck({ note }) {
             <button
               onClick={toggleMastered}
               style={{
-                padding: '0.6rem 0.95rem',
+                padding: '0.6rem 0.9rem',
                 borderRadius: 'var(--radius-sm)',
                 backgroundColor: isCurrentMastered ? 'var(--success-soft)' : 'var(--bg-surface-elevated)',
                 border: `1px solid ${isCurrentMastered ? 'var(--success)' : 'var(--border-subtle)'}`,
@@ -298,7 +323,7 @@ export default function StudyDeck({ note }) {
           <button
             onClick={nextCard}
             style={{
-              padding: '0.6rem 1rem',
+              padding: '0.6rem 0.9rem',
               borderRadius: 'var(--radius-sm)',
               backgroundColor: 'var(--primary)',
               color: '#fff',
@@ -312,7 +337,7 @@ export default function StudyDeck({ note }) {
       </div>
 
       {/* RIGHT: Assistant Chat */}
-      <div style={{
+      <div className="surface-card" style={{
         backgroundColor: 'var(--bg-surface)',
         borderRadius: 'var(--radius-lg)',
         border: '1px solid var(--border-subtle)',
