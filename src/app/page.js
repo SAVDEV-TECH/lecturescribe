@@ -12,6 +12,7 @@ import MobileBottomNav from '@/components/MobileBottomNav';
 import { initialSeedNote } from '@/lib/mockData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getAudioForNote, saveAudioForNote, deleteAudioForNote } from '@/lib/audioStorage';
+import { initGoogleOneTap } from '@/lib/googleOneTap';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('workspace');
@@ -110,6 +111,19 @@ export default function Home() {
       }
     });
 
+    const triggerOneTapIfLoggedOut = () => {
+      initGoogleOneTap({
+        promptOneTap: true,
+        onSuccess: (authenticatedUser) => {
+          setUser(authenticatedUser);
+          if (isSupabaseConfigured()) {
+            loadSupabaseNotes(noteParam);
+          }
+          showToast('Signed in with Google One Tap');
+        },
+      });
+    };
+
     // Check Supabase Auth
     if (isSupabaseConfigured()) {
       if (codeParam) {
@@ -127,6 +141,17 @@ export default function Home() {
         if (session?.user) {
           setUser(session.user);
           loadSupabaseNotes(noteParam);
+        } else {
+          const cachedGoogleUser = localStorage.getItem('ls_google_user');
+          if (cachedGoogleUser) {
+            try {
+              setUser(JSON.parse(cachedGoogleUser));
+            } catch (e) {
+              triggerOneTapIfLoggedOut();
+            }
+          } else {
+            triggerOneTapIfLoggedOut();
+          }
         }
       });
 
@@ -140,6 +165,19 @@ export default function Home() {
       });
 
       return () => subscription.unsubscribe();
+    } else {
+      const cachedGoogleUser = localStorage.getItem('ls_google_user');
+      if (cachedGoogleUser) {
+        queueMicrotask(() => {
+          try {
+            setUser(JSON.parse(cachedGoogleUser));
+          } catch (e) {
+            triggerOneTapIfLoggedOut();
+          }
+        });
+      } else {
+        triggerOneTapIfLoggedOut();
+      }
     }
   }, []);
 
@@ -274,7 +312,13 @@ export default function Home() {
     if (isSupabaseConfigured()) {
       await supabase.auth.signOut();
     }
+    if (typeof window !== 'undefined' && window.google?.accounts?.id) {
+      try {
+        window.google.accounts.id.disableAutoSelect();
+      } catch (e) {}
+    }
     localStorage.removeItem('local_student_user');
+    localStorage.removeItem('ls_google_user');
     setUser(null);
     showToast('Signed out');
   };

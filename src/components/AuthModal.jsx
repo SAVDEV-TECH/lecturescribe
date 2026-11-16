@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase, isSupabaseConfigured, getUserDisplayInfo } from '@/lib/supabase';
+import { initGoogleOneTap, getGoogleClientId } from '@/lib/googleOneTap';
 
 export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, user }) {
   const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'register' | 'reset'
@@ -12,69 +13,29 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
   const [googleLoading, setGoogleLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
+  const googleBtnContainerRef = useRef(null);
 
   const supabaseReady = isSupabaseConfigured();
-  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const hasGoogleClientId = Boolean(getGoogleClientId());
   const userInfo = getUserDisplayInfo(user);
 
-  // Initialize Google One Tap script only when a real NEXT_PUBLIC_GOOGLE_CLIENT_ID is set and user is not logged in
+  // Initialize Google One Tap prompt & personalized button when modal opens
   useEffect(() => {
-    if (!isOpen || user || !supabaseReady || !googleClientId) return;
+    if (!isOpen || user || authMode === 'reset') return;
 
-    const handleGoogleCredentialResponse = async (response) => {
-      if (!response?.credential) return;
-      setGoogleLoading(true);
-      setMessage('');
-      setIsError(false);
-
-      try {
-        const { data, error } = await supabase.auth.signInWithIdToken({
-          provider: 'google',
-          token: response.credential,
-        });
-
-        if (error) throw error;
-        if (data?.user) {
-          onAuthSuccess(data.user);
-          onClose();
-        }
-      } catch (err) {
-        console.error('Google ID token sign-in error:', err);
+    initGoogleOneTap({
+      promptOneTap: true,
+      buttonContainer: googleBtnContainerRef.current,
+      onSuccess: (authenticatedUser) => {
+        onAuthSuccess(authenticatedUser);
+        onClose();
+      },
+      onError: (err) => {
         setIsError(true);
         setMessage(err.message || 'Google One Tap sign-in failed.');
-      } finally {
-        setGoogleLoading(false);
-      }
-    };
-
-    const initializeGoogleOneTap = () => {
-      if (typeof window !== 'undefined' && window.google?.accounts?.id) {
-        try {
-          window.google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleCredentialResponse,
-            auto_select: false,
-            cancel_on_tap_outside: true,
-          });
-          window.google.accounts.id.prompt();
-        } catch (err) {
-          console.warn('Google One Tap init warning:', err);
-        }
-      }
-    };
-
-    if (!document.getElementById('google-client-script')) {
-      const script = document.createElement('script');
-      script.id = 'google-client-script';
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = initializeGoogleOneTap;
-      document.body.appendChild(script);
-    } else {
-      initializeGoogleOneTap();
-    }
-  }, [isOpen, user, supabaseReady, googleClientId, onAuthSuccess, onClose]);
+      },
+    });
+  }, [isOpen, user, authMode, onAuthSuccess, onClose]);
 
   if (!isOpen) return null;
 
@@ -380,9 +341,22 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
               </div>
             )}
 
-            {/* Google OAuth Button */}
+            {/* Google One Tap & OAuth Buttons */}
             {authMode !== 'reset' && (
               <>
+                {hasGoogleClientId && (
+                  <div
+                    ref={googleBtnContainerRef}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      marginBottom: '0.65rem',
+                      minHeight: '42px',
+                    }}
+                  />
+                )}
+
                 <button
                   type="button"
                   onClick={handleGoogleSignIn}
