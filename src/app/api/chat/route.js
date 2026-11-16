@@ -28,7 +28,7 @@ ${transcript.slice(0, 12000)}
 Keep your explanations clear, structured, and easy to memorize for exams. If the question asks about something not mentioned in the transcript, mention that it was not covered in this lecture and provide helpful general context.`;
 
     const completion = await groq.chat.completions.create({
-      model: 'qwen/qwen3.8-27b',
+      model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages.map(m => ({

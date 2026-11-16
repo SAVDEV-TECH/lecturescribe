@@ -8,6 +8,7 @@ export default function Sidebar({
   onSelectNote,
   onNewNote,
   onDeleteNote,
+  onToggleStarNote,
   user,
   onOpenAuthModal,
   onLogout,
@@ -17,20 +18,36 @@ export default function Sidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState('All');
 
+  const hasStarred = notes.some(n => n.starred);
   // Unique tags from notes
-  const availableTags = ['All', ...Array.from(new Set(notes.map(n => n.tag || 'General').filter(Boolean)))];
+  const availableTags = [
+    'All',
+    ...(hasStarred ? ['★ Starred'] : []),
+    ...Array.from(new Set(notes.map(n => n.tag || 'General').filter(Boolean)))
+  ];
 
-  const filteredNotes = notes.filter(note => {
-    const matchesTag = selectedTag === 'All' || (note.tag || 'General') === selectedTag;
-    if (!matchesTag) return false;
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      (note.title || '').toLowerCase().includes(q) ||
-      (note.tag || '').toLowerCase().includes(q) ||
-      (note.transcript || '').toLowerCase().includes(q)
-    );
-  });
+  const filteredNotes = notes
+    .filter(note => {
+      if (selectedTag === '★ Starred') {
+        if (!note.starred) return false;
+      } else {
+        const matchesTag = selectedTag === 'All' || (note.tag || 'General') === selectedTag;
+        if (!matchesTag) return false;
+      }
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        (note.title || '').toLowerCase().includes(q) ||
+        (note.tag || '').toLowerCase().includes(q) ||
+        (note.transcript || '').toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      if (Boolean(a.starred) !== Boolean(b.starred)) {
+        return a.starred ? -1 : 1;
+      }
+      return 0;
+    });
 
   return (
     <>
@@ -96,7 +113,7 @@ export default function Sidebar({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search sessions..."
+              placeholder="Search sessions or course codes..."
               style={{
                 width: '100%',
                 padding: '0.45rem 0.65rem',
@@ -127,7 +144,7 @@ export default function Sidebar({
           </div>
 
           {/* Subject Filter Pills */}
-          {availableTags.length > 2 && (
+          {availableTags.length > 1 && (
             <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem' }}>
               {availableTags.map(tag => (
                 <button
@@ -139,7 +156,7 @@ export default function Sidebar({
                     padding: '0.2rem 0.5rem',
                     borderRadius: '4px',
                     backgroundColor: selectedTag === tag ? 'var(--primary)' : 'var(--bg-surface)',
-                    color: selectedTag === tag ? '#fff' : 'var(--text-muted)',
+                    color: selectedTag === tag ? '#fff' : (tag === '★ Starred' ? 'var(--warning)' : 'var(--text-muted)'),
                     border: '1px solid var(--border-subtle)',
                     whiteSpace: 'nowrap'
                   }}
@@ -200,7 +217,7 @@ export default function Sidebar({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: '0.4rem',
+                      gap: '0.35rem',
                       marginBottom: '0.3rem'
                     }}>
                       <div style={{
@@ -215,42 +232,79 @@ export default function Sidebar({
                         {note.title || 'Untitled Session'}
                       </div>
 
-                      {onDeleteNote && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteNote(note.id);
-                          }}
-                          title="Delete session"
-                          aria-label={`Delete ${note.title || 'session'}`}
-                          style={{
-                            color: 'var(--text-muted)',
-                            fontSize: '0.78rem',
-                            padding: '0.1rem 0.25rem',
-                            borderRadius: '4px',
-                            flexShrink: 0,
-                            opacity: 0.75
-                          }}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                          </svg>
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem', flexShrink: 0 }}>
+                        {onToggleStarNote && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleStarNote(note.id);
+                            }}
+                            title={note.starred ? 'Unpin session' : 'Star / Pin session'}
+                            aria-label={note.starred ? 'Unpin session' : 'Star session'}
+                            style={{
+                              color: note.starred ? 'var(--warning)' : 'var(--text-muted)',
+                              fontSize: '0.85rem',
+                              padding: '0.1rem 0.25rem',
+                              borderRadius: '4px',
+                              opacity: note.starred ? 1 : 0.65
+                            }}
+                          >
+                            {note.starred ? '★' : '☆'}
+                          </button>
+                        )}
+
+                        {onDeleteNote && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteNote(note.id);
+                            }}
+                            title="Delete session"
+                            aria-label={`Delete ${note.title || 'session'}`}
+                            style={{
+                              color: 'var(--text-muted)',
+                              fontSize: '0.78rem',
+                              padding: '0.1rem 0.25rem',
+                              borderRadius: '4px',
+                              flexShrink: 0,
+                              opacity: 0.75
+                            }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                      <span style={{
-                        display: 'inline-block',
-                        padding: '0.12rem 0.45rem',
-                        borderRadius: '4px',
-                        backgroundColor: 'var(--bg-surface)',
-                        border: '1px solid var(--border-subtle)',
-                        fontWeight: 500
-                      }}>
-                        {note.tag || 'General'}
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.35rem', fontSize: '0.72rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '0.12rem 0.45rem',
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          fontWeight: 500
+                        }}>
+                          {note.tag || 'General'}
+                        </span>
+                        {note.pendingSync && (
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '0.1rem 0.4rem',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                            color: 'var(--warning)',
+                            fontWeight: 600,
+                            fontSize: '0.66rem'
+                          }}>
+                            ⏳ Offline
+                          </span>
+                        )}
+                      </div>
                       <span>{note.timestamp || 'Recent'}</span>
                     </div>
                   </div>

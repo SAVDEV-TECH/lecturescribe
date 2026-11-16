@@ -31,11 +31,25 @@ export async function POST(request) {
         quizQuestions: [
           {
             question: `What is the primary focus of this lecture on ${title}?`,
-            answer: `It introduces fundamental ideas, theories, and practical applications within ${subject}.`
+            answer: `It introduces fundamental ideas, theories, and practical applications within ${subject}.`,
+            options: [
+              `It introduces fundamental ideas, theories, and practical applications within ${subject}.`,
+              `It focuses exclusively on administrative syllabus grading policies.`,
+              `It reviews unrelated historical events outside of ${subject}.`,
+              `It only covers laboratory equipment maintenance procedures.`
+            ],
+            correctIndex: 0
           },
           {
             question: 'Why are the core principles covered in this lecture significant?',
-            answer: 'They establish the foundational understanding required for subsequent coursework and exams.'
+            answer: 'They establish the foundational understanding required for subsequent coursework and exams.',
+            options: [
+              'They are optional trivia not tested on exams.',
+              'They establish the foundational understanding required for subsequent coursework and exams.',
+              'They replace all practical laboratory sessions.',
+              'They only apply to postgraduate research.'
+            ],
+            correctIndex: 1
           }
         ]
       });
@@ -55,13 +69,23 @@ Given a raw lecture transcript, analyze it thoroughly and respond ONLY with a va
     "Chronological topic 2 discussed"
   ],
   "quizQuestions": [
-    { "question": "Active-recall review question for exam prep", "answer": "Detailed, correct answer based on the lecture" }
+    {
+      "question": "Active-recall review question for exam prep",
+      "answer": "Detailed, correct answer based on the lecture",
+      "options": [
+        "Option A",
+        "Option B",
+        "Option C",
+        "Option D"
+      ],
+      "correctIndex": 0
+    }
   ]
 }
-Do not include any markdown formatting, backticks, or other text outside the JSON.`;
+Generate 3 to 5 quizQuestions, where each question has 4 realistic multiple-choice options and correctIndex (0, 1, 2, or 3) pointing to the right option. Do not include any markdown formatting, backticks, or other text outside the JSON.`;
 
     const completion = await groq.chat.completions.create({
-      model: 'qwen/qwen3.8-27b',
+      model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',
       messages: [
         { role: 'system', content: systemPrompt },
         {

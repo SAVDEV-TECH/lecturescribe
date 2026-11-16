@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { saveAudioForNote } from '@/lib/audioStorage';
 
 // Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
 const SILENT_AUDIO_DATA = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
@@ -43,6 +44,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const [trackedResetSignal, setTrackedResetSignal] = useState(resetSignal);
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState('Computer Science');
+  const [customSubject, setCustomSubject] = useState('');
   const [language, setLanguage] = useState(initialLanguage);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -54,6 +56,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pastedText, setPastedText] = useState('');
+
+  const resolvedSubject = subject === '__custom__' ? (customSubject.trim() || 'Custom Course') : subject;
 
   // Mobile background & stealth screen-off state
   const [isStealthMode, setIsStealthMode] = useState(false);
@@ -183,66 +187,101 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setMediaSessionPlaybackState('none');
   };
 
-  // Shared transcription + AI note synthesis pipeline
+  // Shared transcription + AI note synthesis pipeline (with IndexedDB audio playback & offline queue)
   const processAudioAndCompile = async (audioBlobOrFile, uploadFileName, fallbackText, effectiveTitle) => {
     setIsProcessing(true);
-    setStatusMessage('Transcribing lecture with Groq Whisper V3...');
+    const noteId = 'lecture_' + Date.now();
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
+    // Persist audio locally in IndexedDB for playback and offline resilience
+    await saveAudioForNote(noteId, audioBlobOrFile, {
+      fileName: uploadFileName,
+      language,
+      pendingSync: isOffline
+    });
 
     let finalTranscript = '';
+    let pendingSync = isOffline;
 
-    try {
-      const formData = new FormData();
-      formData.append('file', audioBlobOrFile, uploadFileName);
-      formData.append('language', language);
+    if (!isOffline) {
+      setStatusMessage('Transcribing lecture with Groq Whisper V3...');
+      try {
+        const formData = new FormData();
+        formData.append('file', audioBlobOrFile, uploadFileName);
+        formData.append('language', language);
 
-      const transcribeRes = await fetch('/api/transcribe', {
-        method: 'POST',
-        body: formData
-      });
+        const transcribeRes = await fetch('/api/transcribe', {
+          method: 'POST',
+          body: formData
+        });
 
-      if (transcribeRes.ok) {
-        const data = await transcribeRes.json();
-        finalTranscript = data.text;
-      } else {
-        const errData = await transcribeRes.json();
-        console.warn('Transcribe note:', errData.error);
+        if (transcribeRes.ok) {
+          const data = await transcribeRes.json();
+          finalTranscript = data.text;
+          pendingSync = false;
+        } else {
+          const errData = await transcribeRes.json();
+          console.warn('Transcribe note:', errData.error);
+        }
+      } catch (err) {
+        console.warn('Transcribe network error (queued for offline sync):', err);
+        pendingSync = true;
       }
-    } catch (err) {
-      console.warn('Transcribe network error:', err);
+    }
+
+    if (pendingSync) {
+      await saveAudioForNote(noteId, audioBlobOrFile, {
+        fileName: uploadFileName,
+        language,
+        pendingSync: true
+      });
     }
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
-      finalTranscript =
-        fallbackText ||
-        `Recorded lecture on "${effectiveTitle}" (${subject}). Enable GROQ_API_KEY in .env.local to transcribe audio files automatically with Whisper Large V3 Turbo.`;
+      finalTranscript = pendingSync
+        ? fallbackText || `[Offline Audio Queued] Recording saved locally for "${effectiveTitle}". Tap "Sync Offline Audio" when back online to run Whisper AI transcription.`
+        : fallbackText ||
+          `Recorded lecture on "${effectiveTitle}" (${resolvedSubject}). Enable GROQ_API_KEY in .env.local to transcribe audio files automatically with Whisper Large V3 Turbo.`;
     }
 
     setLiveTranscript(finalTranscript);
-    setStatusMessage('Analyzing transcript and compiling study notes...');
 
     let notesData = null;
-    try {
-      const analyzeRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript: finalTranscript,
-          title: effectiveTitle,
-          subject: subject
-        })
-      });
+    if (!pendingSync) {
+      setStatusMessage('Analyzing transcript and compiling study notes...');
+      try {
+        const analyzeRes = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript: finalTranscript,
+            title: effectiveTitle,
+            subject: resolvedSubject
+          })
+        });
 
-      if (analyzeRes.ok) {
-        notesData = await analyzeRes.json();
+        if (analyzeRes.ok) {
+          notesData = await analyzeRes.json();
+        }
+      } catch (err) {
+        console.error('Analysis error:', err);
       }
-    } catch (err) {
-      console.error('Analysis error:', err);
+    } else {
+      notesData = {
+        summary: 'Audio recorded offline and safely stored on your device. Connect to the internet and tap "Sync Offline Audio" to transcribe and compile full AI notes.',
+        keyConcepts: [],
+        outline: [],
+        quizQuestions: []
+      };
     }
 
     const newNote = {
-      id: 'lecture_' + Date.now(),
+      id: noteId,
       title: effectiveTitle,
-      tag: subject,
+      tag: resolvedSubject,
+      language,
+      hasLocalAudio: true,
+      pendingSync,
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       transcript: finalTranscript,
       notes: notesData
@@ -250,7 +289,11 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
     onSaveNote(newNote);
     setIsProcessing(false);
-    setStatusMessage('Session saved and compiled successfully');
+    setStatusMessage(
+      pendingSync
+        ? 'Offline audio saved locally — ready to sync when online'
+        : 'Session saved and compiled successfully'
+    );
   };
 
   const togglePause = () => {
@@ -317,7 +360,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
 
       const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const effectiveTitle = title.trim() || `Lecture on ${subject}`;
+      const effectiveTitle = title.trim() || `Lecture on ${resolvedSubject}`;
       const fallbackText =
         liveTranscript ||
         accumulatedWebSpeechRef.current ||
@@ -342,7 +385,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
       configureMediaSession({
         title: title.trim() || 'Lecture Recording Active',
-        subject,
+        subject: resolvedSubject,
         onPause: () => togglePause(),
         onPlay: () => togglePause(),
         onStop: () => stopRecording()
@@ -527,7 +570,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       .replace(/[_-]+/g, ' ')
       .trim();
 
-    const effectiveTitle = title.trim() || derivedTitle || `Lecture on ${subject}`;
+    const effectiveTitle = title.trim() || derivedTitle || `Lecture on ${resolvedSubject}`;
     if (!title.trim() && derivedTitle) {
       setTitle(derivedTitle);
     }
@@ -535,7 +578,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     await processAudioAndCompile(
       file,
       file.name,
-      `Uploaded audio file "${file.name}" for ${effectiveTitle} (${subject}).`,
+      `Uploaded audio file "${file.name}" for ${effectiveTitle} (${resolvedSubject}).`,
       effectiveTitle
     );
   };
@@ -544,7 +587,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     const cleanText = pastedText.trim();
     if (!cleanText || isProcessing) return;
 
-    const effectiveTitle = title.trim() || `Lecture on ${subject}`;
+    const effectiveTitle = title.trim() || `Lecture on ${resolvedSubject}`;
     setIsProcessing(true);
     setLiveTranscript(cleanText);
     setStatusMessage('Analyzing transcript and compiling study notes...');
@@ -557,7 +600,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         body: JSON.stringify({
           transcript: cleanText,
           title: effectiveTitle,
-          subject: subject
+          subject: resolvedSubject
         })
       });
 
@@ -571,7 +614,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     const newNote = {
       id: 'lecture_' + Date.now(),
       title: effectiveTitle,
-      tag: subject,
+      tag: resolvedSubject,
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       transcript: cleanText,
       notes: notesData
@@ -708,30 +751,52 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
         <div>
           <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
-            SUBJECT
+            SUBJECT / COURSE
           </label>
-          <select
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            disabled={isRecording}
-            style={{
-              width: '100%',
-              padding: '0.65rem 0.85rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-input)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.88rem',
-              outline: 'none',
-              color: 'var(--text-main)'
-            }}
-          >
-            <option value="Computer Science">Computer Science</option>
-            <option value="Engineering">Engineering</option>
-            <option value="Medicine & Health">Medicine & Health</option>
-            <option value="Economics & Finance">Economics & Finance</option>
-            <option value="Law & Governance">Law & Governance</option>
-            <option value="General Studies">General Studies</option>
-          </select>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+            <select
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              disabled={isRecording}
+              style={{
+                width: '100%',
+                padding: '0.65rem 0.85rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-input)',
+                border: '1px solid var(--border-subtle)',
+                fontSize: '0.88rem',
+                outline: 'none',
+                color: 'var(--text-main)'
+              }}
+            >
+              <option value="Computer Science">Computer Science</option>
+              <option value="Engineering">Engineering</option>
+              <option value="Medicine & Health">Medicine & Health</option>
+              <option value="Economics & Finance">Economics & Finance</option>
+              <option value="Law & Governance">Law & Governance</option>
+              <option value="General Studies">General Studies</option>
+              <option value="__custom__">+ Custom Course / Tag...</option>
+            </select>
+            {subject === '__custom__' && (
+              <input
+                type="text"
+                value={customSubject}
+                onChange={(e) => setCustomSubject(e.target.value)}
+                placeholder="e.g. CSC 301, BIO 102, Physics"
+                disabled={isRecording}
+                style={{
+                  width: '100%',
+                  padding: '0.55rem 0.75rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-input)',
+                  border: '1px solid var(--primary)',
+                  fontSize: '0.84rem',
+                  outline: 'none',
+                  color: 'var(--text-main)'
+                }}
+              />
+            )}
+          </div>
         </div>
 
         <div>

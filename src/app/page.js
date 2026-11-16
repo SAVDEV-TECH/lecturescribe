@@ -11,6 +11,7 @@ import AuthModal from '@/components/AuthModal';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import { initialSeedNote } from '@/lib/mockData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { getAudioForNote, saveAudioForNote, deleteAudioForNote } from '@/lib/audioStorage';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('workspace');
@@ -39,10 +40,19 @@ export default function Home() {
         .order('created_at', { ascending: false });
 
       if (!error && data && data.length > 0) {
+        let starredSet = new Set();
+        try {
+          const savedLocal = JSON.parse(localStorage.getItem('ls_notes') || '[]');
+          savedLocal.forEach(item => {
+            if (item.starred) starredSet.add(String(item.id));
+          });
+        } catch (e) {}
+
         const formatted = data.map(n => ({
           id: n.id,
           title: n.title,
           tag: n.tag,
+          starred: starredSet.has(String(n.id)),
           timestamp: new Date(n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
           transcript: n.transcript,
           notes: n.notes_json
@@ -148,6 +158,19 @@ export default function Home() {
           .single();
 
         if (!error && data?.id) {
+          if (String(data.id) !== String(newNote.id)) {
+            const existingAudio = await getAudioForNote(newNote.id);
+            if (existingAudio?.blob) {
+              await saveAudioForNote(data.id, existingAudio.blob, {
+                mimeType: existingAudio.mimeType,
+                pendingSync: existingAudio.pendingSync,
+                dialect: existingAudio.dialect,
+                subject: existingAudio.subject,
+                title: existingAudio.title
+              });
+              await deleteAudioForNote(newNote.id);
+            }
+          }
           savedNote = { ...newNote, id: data.id };
         }
       } catch (e) {
@@ -159,7 +182,11 @@ export default function Home() {
     setNotes(updatedNotes);
     setActiveNoteId(savedNote.id);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
-    showToast(`Saved "${savedNote.title}"`);
+    showToast(
+      savedNote.pendingSync
+        ? `Offline audio saved for "${savedNote.title}"`
+        : `Saved "${savedNote.title}"`
+    );
   };
 
   // Handle Update Note (Edit Title, Tag, Summary, Transcript)
@@ -186,11 +213,27 @@ export default function Home() {
     }
   };
 
+  // Toggle Star / Pin on Note
+  const handleToggleStarNote = (noteId) => {
+    let becameStarred = false;
+    const updatedNotes = notes.map(n => {
+      if (n.id === noteId) {
+        becameStarred = !n.starred;
+        return { ...n, starred: becameStarred };
+      }
+      return n;
+    });
+    setNotes(updatedNotes);
+    localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
+    showToast(becameStarred ? 'Pinned lecture to top' : 'Unpinned lecture');
+  };
+
   // Handle Delete Note
   const handleDeleteNote = async (noteId) => {
     const remainingNotes = notes.filter(n => n.id !== noteId);
     setNotes(remainingNotes);
     localStorage.setItem('ls_notes', JSON.stringify(remainingNotes));
+    deleteAudioForNote(noteId);
     showToast('Session removed');
 
     if (activeNoteId === noteId) {
@@ -266,6 +309,7 @@ export default function Home() {
           onSelectNote={setActiveNoteId}
           onNewNote={handleNewNote}
           onDeleteNote={handleDeleteNote}
+          onToggleStarNote={handleToggleStarNote}
           user={user}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           onLogout={handleLogout}
@@ -310,7 +354,7 @@ export default function Home() {
                 >
                   {notes.map(n => (
                     <option key={n.id} value={n.id}>
-                      {n.title || 'Untitled'} ({n.tag || 'General'})
+                      {n.starred ? '★ ' : ''}{n.title || 'Untitled'} ({n.tag || 'General'})
                     </option>
                   ))}
                 </select>
@@ -341,6 +385,7 @@ export default function Home() {
                 note={activeNote}
                 onUpdateNote={handleUpdateNote}
                 onDeleteNote={handleDeleteNote}
+                onToggleStarNote={handleToggleStarNote}
                 onOpenStudy={() => {
                   setActiveTab('study');
                   window.scrollTo({ top: 0, behavior: 'smooth' });

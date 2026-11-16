@@ -1,13 +1,61 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { getAudioForNote, saveAudioForNote } from '@/lib/audioStorage';
 
-export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStudy }) {
+function buildMultipleChoiceQuestion(q, idx, allQuestions = [], allConcepts = []) {
+  if (Array.isArray(q.options) && q.options.length >= 2 && typeof q.correctIndex === 'number') {
+    return {
+      question: q.question,
+      answer: q.answer,
+      options: q.options,
+      correctIndex: q.correctIndex
+    };
+  }
+
+  // Construct deterministic 4-choice options for legacy notes that only have question + answer
+  const distractorPool = [
+    ...allQuestions.filter((_, i) => i !== idx).map(item => item.answer),
+    ...allConcepts.map(c => c.definition),
+    'This topic was deferred to a future laboratory seminar and not covered in this session.',
+    'It relies exclusively on manual trial-and-error without theoretical structure.',
+    'It is an outdated historical hypothesis that has been replaced in modern practice.'
+  ].filter(text => text && text !== q.answer);
+
+  const uniqueDistractors = Array.from(new Set(distractorPool)).slice(0, 3);
+  while (uniqueDistractors.length < 3) {
+    uniqueDistractors.push(`Alternative interpretation ${uniqueDistractors.length + 1}`);
+  }
+
+  const targetCorrectIndex = idx % 4;
+  const options = [...uniqueDistractors];
+  options.splice(targetCorrectIndex, 0, q.answer);
+
+  return {
+    question: q.question,
+    answer: q.answer,
+    options: options.slice(0, 4),
+    correctIndex: targetCorrectIndex
+  };
+}
+
+export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleStarNote, onOpenStudy }) {
   const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [revealAllAnswers, setRevealAllAnswers] = useState(false);
+
+  // Interactive Quiz state
+  const [quizMode, setQuizMode] = useState('interactive');
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+
+  // Local Audio Player & Offline Sync state
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [audioRecord, setAudioRecord] = useState(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isSyncingOffline, setIsSyncingOffline] = useState(false);
+  const audioPlayerRef = useRef(null);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -17,21 +65,45 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
   const [editSummary, setEditSummary] = useState(note?.notes?.summary || '');
   const [editTranscript, setEditTranscript] = useState(note?.transcript || '');
 
-  // Reset edit mode when switching notes
+  // Reset state when switching notes
   if (note?.id !== trackedNoteId) {
     setTrackedNoteId(note?.id);
     setIsEditing(false);
     setIsRecompiling(false);
     setIsSpeaking(false);
     setRevealAllAnswers(false);
+    setSelectedAnswers({});
+    setAudioUrl(null);
+    setAudioRecord(null);
+    setPlaybackRate(1);
+    setIsSyncingOffline(false);
     setEditTitle(note?.title || '');
     setEditTag(note?.tag || 'General Studies');
     setEditSummary(note?.notes?.summary || '');
     setEditTranscript(note?.transcript || '');
   }
 
+  // Load local audio blob from IndexedDB for this lecture
   useEffect(() => {
+    let activeObjectUrl = null;
+    let cancelled = false;
+
+    if (trackedNoteId) {
+      getAudioForNote(trackedNoteId).then((record) => {
+        if (cancelled) return;
+        if (record?.blob) {
+          activeObjectUrl = URL.createObjectURL(record.blob);
+          setAudioUrl(activeObjectUrl);
+          setAudioRecord(record);
+        }
+      });
+    }
+
     return () => {
+      cancelled = true;
+      if (activeObjectUrl) {
+        URL.revokeObjectURL(activeObjectUrl);
+      }
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
@@ -57,6 +129,72 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
   const { title, tag, timestamp, transcript, notes } = note;
   const totalFlashcardsCount =
     (notes?.keyConcepts?.length || 0) + (notes?.quizQuestions?.length || 0) || 1;
+  const isOfflineQueued = Boolean(note.pendingSync || audioRecord?.pendingSync);
+
+  const handlePlaybackSpeed = (rate) => {
+    setPlaybackRate(rate);
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.playbackRate = rate;
+    }
+  };
+
+  // Sync an offline-queued audio recording with Groq Whisper + AI Note Synthesizer
+  const handleSyncOfflineAudio = async () => {
+    if (!audioRecord?.blob || isSyncingOffline || !onUpdateNote) return;
+
+    setIsSyncingOffline(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', audioRecord.blob, audioRecord.fileName || 'lecture.webm');
+      formData.append('language', audioRecord.language || note.language || 'en');
+
+      const transcribeRes = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!transcribeRes.ok) {
+        throw new Error('Transcription request failed');
+      }
+
+      const transcribeData = await transcribeRes.json();
+      const freshTranscript = transcribeData.text || transcript;
+
+      let compiledNotes = notes;
+      const analyzeRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: freshTranscript,
+          title,
+          subject: tag
+        })
+      });
+
+      if (analyzeRes.ok) {
+        compiledNotes = await analyzeRes.json();
+      }
+
+      await saveAudioForNote(note.id, audioRecord.blob, {
+        fileName: audioRecord.fileName,
+        language: audioRecord.language,
+        pendingSync: false
+      });
+
+      setAudioRecord(prev => (prev ? { ...prev, pendingSync: false } : prev));
+
+      onUpdateNote({
+        ...note,
+        pendingSync: false,
+        transcript: freshTranscript,
+        notes: compiledNotes
+      });
+    } catch (err) {
+      console.warn('Offline audio sync error:', err);
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
 
   const toggleReadSummary = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -135,6 +273,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
         };
         onUpdateNote(updated);
         setEditSummary(compiledNotes?.summary || '');
+        setSelectedAnswers({});
         setIsEditing(false);
       }
     } catch (e) {
@@ -227,27 +366,32 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
         <div style={{ flex: 1, minWidth: 'min(100%, 220px)' }}>
           {isEditing ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <select
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  list="subject-tag-suggestions"
                   value={editTag}
                   onChange={(e) => setEditTag(e.target.value)}
+                  placeholder="Subject or Course Code (e.g. CSC 301)"
                   style={{
-                    padding: '0.35rem 0.65rem',
+                    padding: '0.38rem 0.65rem',
                     borderRadius: 'var(--radius-sm)',
                     backgroundColor: 'var(--bg-input)',
                     border: '1px solid var(--border-subtle)',
                     fontSize: '0.78rem',
-                    color: 'var(--text-main)'
+                    color: 'var(--text-main)',
+                    outline: 'none'
                   }}
-                >
-                  <option value="Computer Science">Computer Science</option>
-                  <option value="Engineering">Engineering</option>
-                  <option value="Medicine & Health">Medicine & Health</option>
-                  <option value="Economics & Finance">Economics & Finance</option>
-                  <option value="Law & Governance">Law & Governance</option>
-                  <option value="General Studies">General Studies</option>
-                </select>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', alignSelf: 'center' }}>
+                />
+                <datalist id="subject-tag-suggestions">
+                  <option value="Computer Science" />
+                  <option value="Engineering" />
+                  <option value="Medicine & Health" />
+                  <option value="Economics & Finance" />
+                  <option value="Law & Governance" />
+                  <option value="General Studies" />
+                </datalist>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   {timestamp}
                 </span>
               </div>
@@ -271,7 +415,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
                 <span style={{
                   fontSize: '0.74rem',
                   fontWeight: 600,
@@ -283,6 +427,18 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
                 }}>
                   {tag || 'General'}
                 </span>
+                {note.starred && (
+                  <span style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '0.18rem 0.5rem',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                    color: 'var(--warning)'
+                  }}>
+                    ★ Pinned
+                  </span>
+                )}
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{timestamp}</span>
               </div>
 
@@ -362,6 +518,24 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
             </>
           ) : (
             <>
+              {onToggleStarNote && (
+                <button
+                  onClick={() => onToggleStarNote(note.id)}
+                  title={note.starred ? 'Unpin session' : 'Pin session to top'}
+                  style={{
+                    padding: '0.45rem 0.75rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    color: note.starred ? 'var(--warning)' : 'var(--text-main)'
+                  }}
+                >
+                  {note.starred ? '★ Pinned' : '☆ Pin'}
+                </button>
+              )}
+
               {onUpdateNote && (
                 <>
                   <button
@@ -474,6 +648,103 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
         </div>
       </div>
 
+      {/* Offline Recording Queue Sync Banner */}
+      {isOfflineQueued && (
+        <div className="no-print" style={{
+          padding: '0.9rem 1rem',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'rgba(245, 158, 11, 0.12)',
+          border: '1px solid var(--warning)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '0.75rem'
+        }}>
+          <div style={{ fontSize: '0.82rem', color: 'var(--text-main)', lineHeight: 1.5 }}>
+            <strong style={{ color: 'var(--warning)' }}>⏳ Offline Audio Recording Queued:</strong>{' '}
+            Your audio was safely saved on this device while offline. Connect to the internet to run Whisper AI transcription and compile study notes.
+          </div>
+          {audioRecord?.blob && (
+            <button
+              type="button"
+              onClick={handleSyncOfflineAudio}
+              disabled={isSyncingOffline}
+              style={{
+                padding: '0.5rem 0.95rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--warning)',
+                color: '#0f172a',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                opacity: isSyncingOffline ? 0.65 : 1
+              }}
+            >
+              {isSyncingOffline ? 'Syncing & Transcribing...' : 'Sync Offline Audio Now'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Embedded Lecture Audio Playback Bar (IndexedDB) */}
+      {audioUrl && (
+        <div className="no-print" style={{
+          padding: '0.85rem 1rem',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'var(--bg-surface-elevated)',
+          border: '1px solid var(--border-subtle)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.6rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+              🎧 Recorded Lecture Audio
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginRight: '0.2rem' }}>Speed:</span>
+              {[1, 1.25, 1.5, 2].map(rate => (
+                <button
+                  key={rate}
+                  type="button"
+                  onClick={() => handlePlaybackSpeed(rate)}
+                  style={{
+                    fontSize: '0.7rem',
+                    fontWeight: playbackRate === rate ? 700 : 500,
+                    padding: '0.18rem 0.45rem',
+                    borderRadius: '4px',
+                    backgroundColor: playbackRate === rate ? 'var(--primary)' : 'var(--bg-surface)',
+                    color: playbackRate === rate ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid var(--border-subtle)'
+                  }}
+                >
+                  {rate}x
+                </button>
+              ))}
+              <a
+                href={audioUrl}
+                download={audioRecord?.fileName || `${title.replace(/[^a-z0-9]/gi, '_')}.webm`}
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  color: 'var(--primary)',
+                  textDecoration: 'none',
+                  marginLeft: '0.35rem'
+                }}
+              >
+                Download Audio
+              </a>
+            </div>
+          </div>
+          <audio
+            ref={audioPlayerRef}
+            controls
+            src={audioUrl}
+            style={{ width: '100%', height: '38px' }}
+          />
+        </div>
+      )}
+
       {/* Executive Summary */}
       <section>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
@@ -572,51 +843,215 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onOpenStud
         </section>
       )}
 
-      {/* Review Questions */}
-      {notes?.quizQuestions && notes.quizQuestions.length > 0 && (
-        <section>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.7rem', flexWrap: 'wrap' }}>
-            <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
-              Review Questions
-            </h3>
-            <button
-              type="button"
-              onClick={() => setRevealAllAnswers(!revealAllAnswers)}
-              className="no-print"
-              style={{
-                fontSize: '0.74rem',
-                fontWeight: 600,
-                color: 'var(--primary)'
-              }}
-            >
-              {revealAllAnswers ? 'Hide All Answers' : 'Reveal All Answers'}
-            </button>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-            {notes.quizQuestions.map((q, idx) => (
-              <details
-                key={`${idx}-${revealAllAnswers}`}
-                open={revealAllAnswers ? true : undefined}
-                style={{
-                  padding: '0.75rem 0.95rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-surface-elevated)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '0.86rem',
-                  cursor: 'pointer'
-                }}
-              >
-                <summary style={{ fontWeight: 600, color: 'var(--text-main)', outline: 'none' }}>
-                  {q.question}
-                </summary>
-                <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.6 }}>
-                  <strong>Solution:</strong> {q.answer}
-                </div>
-              </details>
-            ))}
-          </div>
-        </section>
-      )}
+      {/* Review Questions & Interactive Multiple-Choice Quiz */}
+      {notes?.quizQuestions && notes.quizQuestions.length > 0 && (() => {
+        const builtQuestions = notes.quizQuestions.map((q, idx) =>
+          buildMultipleChoiceQuestion(q, idx, notes.quizQuestions, notes.keyConcepts || [])
+        );
+        const answeredCount = Object.keys(selectedAnswers).length;
+        const correctCount = builtQuestions.reduce((acc, q, idx) => {
+          return selectedAnswers[idx] === q.correctIndex ? acc + 1 : acc;
+        }, 0);
+
+        return (
+          <section>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
+                  Review Questions & Self-Test Quiz
+                </h3>
+                {quizMode === 'interactive' && (
+                  <span style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '0.18rem 0.55rem',
+                    borderRadius: '4px',
+                    backgroundColor: answeredCount > 0 ? 'rgba(16, 185, 129, 0.14)' : 'var(--bg-surface-elevated)',
+                    color: answeredCount > 0 ? 'var(--success)' : 'var(--text-secondary)',
+                    border: '1px solid var(--border-subtle)'
+                  }}>
+                    Score: {correctCount} / {builtQuestions.length}
+                  </span>
+                )}
+              </div>
+
+              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                {quizMode === 'interactive' && answeredCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAnswers({})}
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '0.22rem 0.55rem',
+                      borderRadius: '4px',
+                      backgroundColor: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)'
+                    }}
+                  >
+                    Reset Quiz
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setQuizMode(quizMode === 'interactive' ? 'study' : 'interactive')}
+                  style={{
+                    fontSize: '0.74rem',
+                    fontWeight: 600,
+                    padding: '0.22rem 0.6rem',
+                    borderRadius: '4px',
+                    backgroundColor: 'var(--bg-surface-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--primary)'
+                  }}
+                >
+                  {quizMode === 'interactive' ? 'Switch to Study Key' : 'Switch to Interactive Quiz'}
+                </button>
+                {quizMode === 'study' && (
+                  <button
+                    type="button"
+                    onClick={() => setRevealAllAnswers(!revealAllAnswers)}
+                    style={{
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      color: 'var(--primary)'
+                    }}
+                  >
+                    {revealAllAnswers ? 'Hide All' : 'Reveal All'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {quizMode === 'interactive' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {builtQuestions.map((q, qIdx) => {
+                  const chosen = selectedAnswers[qIdx];
+                  const isAnswered = typeof chosen === 'number';
+                  return (
+                    <div
+                      key={qIdx}
+                      style={{
+                        padding: '1rem',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: 'var(--bg-surface-elevated)',
+                        border: '1px solid var(--border-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.65rem'
+                      }}
+                    >
+                      <div style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1.5 }}>
+                        {qIdx + 1}. {q.question}
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                        {q.options.map((opt, optIdx) => {
+                          const isSelected = chosen === optIdx;
+                          const isCorrectOption = optIdx === q.correctIndex;
+                          let bg = 'var(--bg-surface)';
+                          let border = 'var(--border-subtle)';
+                          let textColor = 'var(--text-secondary)';
+
+                          if (isAnswered) {
+                            if (isCorrectOption) {
+                              bg = 'rgba(16, 185, 129, 0.14)';
+                              border = 'var(--success)';
+                              textColor = 'var(--text-main)';
+                            } else if (isSelected) {
+                              bg = 'rgba(239, 68, 68, 0.14)';
+                              border = 'var(--danger)';
+                              textColor = 'var(--text-main)';
+                            }
+                          }
+
+                          return (
+                            <button
+                              key={optIdx}
+                              type="button"
+                              onClick={() => {
+                                if (!isAnswered) {
+                                  setSelectedAnswers(prev => ({ ...prev, [qIdx]: optIdx }));
+                                }
+                              }}
+                              style={{
+                                textAlign: 'left',
+                                padding: '0.6rem 0.8rem',
+                                borderRadius: 'var(--radius-sm)',
+                                backgroundColor: bg,
+                                border: `1px solid ${border}`,
+                                color: textColor,
+                                fontSize: '0.82rem',
+                                lineHeight: 1.5,
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '0.5rem',
+                                cursor: isAnswered ? 'default' : 'pointer'
+                              }}
+                            >
+                              <span style={{ fontWeight: 700, color: 'var(--primary)', flexShrink: 0 }}>
+                                {String.fromCharCode(65 + optIdx)}.
+                              </span>
+                              <span style={{ flex: 1 }}>{opt}</span>
+                              {isAnswered && isCorrectOption && (
+                                <span style={{ color: 'var(--success)', fontWeight: 700, flexShrink: 0 }}>✓</span>
+                              )}
+                              {isAnswered && isSelected && !isCorrectOption && (
+                                <span style={{ color: 'var(--danger)', fontWeight: 700, flexShrink: 0 }}>✕</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {isAnswered && (
+                        <div style={{
+                          marginTop: '0.2rem',
+                          paddingTop: '0.55rem',
+                          borderTop: '1px solid var(--border-subtle)',
+                          fontSize: '0.8rem',
+                          color: 'var(--text-secondary)',
+                          lineHeight: 1.6
+                        }}>
+                          <strong style={{ color: chosen === q.correctIndex ? 'var(--success)' : 'var(--warning)' }}>
+                            {chosen === q.correctIndex ? 'Correct! ' : 'Explanation: '}
+                          </strong>
+                          {q.answer}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                {notes.quizQuestions.map((q, idx) => (
+                  <details
+                    key={`${idx}-${revealAllAnswers}`}
+                    open={revealAllAnswers ? true : undefined}
+                    style={{
+                      padding: '0.75rem 0.95rem',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'var(--bg-surface-elevated)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.86rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <summary style={{ fontWeight: 600, color: 'var(--text-main)', outline: 'none' }}>
+                      {q.question}
+                    </summary>
+                    <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.6 }}>
+                      <strong>Solution:</strong> {q.answer}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* Full Transcript Toggle */}
       <section style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
