@@ -1,5 +1,7 @@
 'use client';
 
+import { getUserDisplayInfo } from '@/lib/supabase';
+
 export default function Header({ 
   activeTab, 
   setActiveTab, 
@@ -9,6 +11,8 @@ export default function Header({
   onOpenAuthModal, 
   user 
 }) {
+  const userInfo = getUserDisplayInfo(user);
+
   return (
     <header className="app-header" style={{
       display: 'flex',
@@ -148,32 +152,49 @@ export default function Header({
 
         <button
           onClick={onOpenAuthModal}
+          title={userInfo ? `Account (${userInfo.email})` : 'Sign in with Google or Email'}
           style={{
-            padding: '0.45rem 0.75rem',
+            padding: '0.4rem 0.75rem',
             borderRadius: 'var(--radius-sm)',
-            backgroundColor: user ? 'var(--bg-surface-elevated)' : 'var(--primary)',
-            color: user ? 'var(--text-main)' : '#fff',
+            backgroundColor: userInfo ? 'var(--bg-surface-elevated)' : 'var(--primary)',
+            color: userInfo ? 'var(--text-main)' : '#fff',
             fontSize: '0.82rem',
             fontWeight: 600,
-            border: '1px solid ' + (user ? 'var(--border-subtle)' : 'var(--primary)'),
+            border: '1px solid ' + (userInfo ? 'var(--border-subtle)' : 'var(--primary)'),
             display: 'flex',
             alignItems: 'center',
             gap: '0.45rem',
-            maxWidth: '150px'
+            maxWidth: '165px'
           }}
         >
-          {user ? (
+          {userInfo ? (
             <>
-              <span style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--success)',
-                display: 'inline-block',
-                flexShrink: 0
-              }}></span>
+              {userInfo.avatar ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={userInfo.avatar}
+                  alt={userInfo.name}
+                  referrerPolicy="no-referrer"
+                  style={{
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    flexShrink: 0
+                  }}
+                />
+              ) : (
+                <span style={{
+                  width: '7px',
+                  height: '7px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--success)',
+                  display: 'inline-block',
+                  flexShrink: 0
+                }}></span>
+              )}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {user.email?.split('@')[0]}
+                {userInfo.name}
               </span>
             </>
           ) : (

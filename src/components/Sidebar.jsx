@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { getUserDisplayInfo } from '@/lib/supabase';
 
 export default function Sidebar({
   notes,
@@ -17,6 +18,7 @@ export default function Sidebar({
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState('All');
+  const userInfo = getUserDisplayInfo(user);
 
   const hasStarred = notes.some(n => n.starred);
   // Unique tags from notes
@@ -324,55 +326,81 @@ export default function Sidebar({
           justifyContent: 'space-between',
           gap: '0.5rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', overflow: 'hidden' }}>
-            <div style={{
-              width: '26px',
-              height: '26px',
-              borderRadius: '4px',
-              backgroundColor: user ? 'var(--primary)' : 'var(--bg-surface-elevated)',
-              color: user ? '#fff' : 'var(--text-muted)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.78rem',
-              fontWeight: 700,
-              flexShrink: 0
-            }}>
-              {user ? user.email?.charAt(0).toUpperCase() : 'U'}
-            </div>
-            <div style={{ overflow: 'hidden' }}>
+          <div
+            onClick={onOpenAuthModal}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', overflow: 'hidden', cursor: 'pointer', flex: 1, minWidth: 0 }}
+            title={userInfo ? `${userInfo.name} (${userInfo.email})` : 'Click to sign in'}
+          >
+            {userInfo?.avatar ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={userInfo.avatar}
+                alt={userInfo.name}
+                referrerPolicy="no-referrer"
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1px solid var(--primary)',
+                  flexShrink: 0
+                }}
+              />
+            ) : (
+              <div style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                backgroundColor: userInfo ? 'var(--primary)' : 'var(--bg-surface-elevated)',
+                color: userInfo ? '#fff' : 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                flexShrink: 0
+              }}>
+                {userInfo ? userInfo.initial : 'G'}
+              </div>
+            )}
+            <div style={{ overflow: 'hidden', minWidth: 0 }}>
               <div style={{
                 fontSize: '0.78rem',
                 fontWeight: 600,
-                color: user ? 'var(--text-main)' : 'var(--text-muted)',
+                color: userInfo ? 'var(--text-main)' : 'var(--text-muted)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis'
               }}>
-                {user ? user.email : 'Guest Session'}
+                {userInfo ? userInfo.name : 'Guest Session'}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                 <span style={{
                   width: '6px',
                   height: '6px',
                   borderRadius: '50%',
-                  backgroundColor: user ? 'var(--success)' : 'var(--warning)',
-                  display: 'inline-block'
+                  backgroundColor: userInfo ? 'var(--success)' : 'var(--warning)',
+                  display: 'inline-block',
+                  flexShrink: 0
                 }}></span>
-                <span>{user ? 'Cloud Sync' : 'Local Storage'}</span>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {userInfo ? (userInfo.email || 'Cloud Sync') : 'Local Storage'}
+                </span>
               </div>
             </div>
           </div>
 
-          {user ? (
+          {userInfo ? (
             <button
               onClick={onLogout}
               style={{
                 fontSize: '0.74rem',
-                color: 'var(--text-muted)',
+                color: 'var(--danger)',
+                fontWeight: 600,
                 padding: '0.3rem 0.55rem',
                 borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)'
+                border: '1px solid var(--border-subtle)',
+                flexShrink: 0
               }}
             >
               Sign out
@@ -386,7 +414,8 @@ export default function Sidebar({
                 fontWeight: 600,
                 padding: '0.3rem 0.55rem',
                 borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)'
+                border: '1px solid var(--border-subtle)',
+                flexShrink: 0
               }}
             >
               Sign in

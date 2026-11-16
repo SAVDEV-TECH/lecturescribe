@@ -72,10 +72,13 @@ export default function Home() {
   useEffect(() => {
     const savedTheme = localStorage.getItem('ls_theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
+    localStorage.removeItem('local_student_user');
 
     const params = new URLSearchParams(window.location.search);
     const actionParam = params.get('action');
     const noteParam = params.get('note');
+    const authParam = params.get('auth');
+    const codeParam = params.get('code');
 
     queueMicrotask(() => {
       setTheme(savedTheme);
@@ -83,6 +86,12 @@ export default function Home() {
       if (actionParam === 'record') {
         setActiveTab('workspace');
         setRecorderResetSignal(prev => prev + 1);
+      }
+
+      if (authParam === 'success') {
+        showToast('Signed in successfully');
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
       }
 
       // Initial Local Notes
@@ -99,17 +108,21 @@ export default function Home() {
           console.warn('Failed to parse local notes', e);
         }
       }
-
-      if (!isSupabaseConfigured()) {
-        const localUser = localStorage.getItem('local_student_user');
-        if (localUser) {
-          try { setUser(JSON.parse(localUser)); } catch (e) {}
-        }
-      }
     });
 
     // Check Supabase Auth
     if (isSupabaseConfigured()) {
+      if (codeParam) {
+        supabase.auth.exchangeCodeForSession(codeParam).then(({ data }) => {
+          if (data?.session?.user) {
+            setUser(data.session.user);
+            loadSupabaseNotes(noteParam);
+            showToast('Signed in with Google');
+            window.history.replaceState({}, '', window.location.pathname);
+          }
+        }).catch(() => {});
+      }
+
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
           setUser(session.user);
@@ -117,11 +130,11 @@ export default function Home() {
         }
       });
 
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
           setUser(session.user);
           loadSupabaseNotes(noteParam);
-        } else {
+        } else if (event === 'SIGNED_OUT') {
           setUser(null);
         }
       });
@@ -263,6 +276,7 @@ export default function Home() {
     }
     localStorage.removeItem('local_student_user');
     setUser(null);
+    showToast('Signed out');
   };
 
   const activeNote = notes.find(n => n.id === activeNoteId) || notes[0] || null;
@@ -415,7 +429,12 @@ export default function Home() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onAuthSuccess={(u) => setUser(u)}
+        user={user}
+        onLogout={handleLogout}
+        onAuthSuccess={(u) => {
+          setUser(u);
+          showToast('Signed in successfully');
+        }}
       />
     </div>
   );
