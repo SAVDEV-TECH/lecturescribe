@@ -58,7 +58,7 @@ export default function PwaRegister() {
     const promptEvent = installPrompt || window.deferredInstallPrompt;
     if (!promptEvent) {
       // iOS or browser without beforeinstallprompt
-      alert('To install on your phone:\n\n• On iPhone/Safari: Tap the Share button, then tap "Add to Home Screen".\n• On Android/Chrome: Tap the three dots menu, then tap "Install App" or "Add to Home Screen".');
+      alert('Install:\n• iPhone: Share > Add to Home Screen\n• Android: Menu > Install App');
       return;
     }
 
@@ -93,8 +93,8 @@ export default function PwaRegister() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <Image src="/icon-192.png" alt="LectureScribe" width={38} height={38} style={{ borderRadius: '8px' }} />
         <div>
-          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--text-main)' }}>Install LectureScribe</div>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Add to home screen for fullscreen mobile use</div>
+          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--text-main)' }}>Install App</div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Add to home screen</div>
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>

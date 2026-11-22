@@ -121,7 +121,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         border: '1px solid var(--border-subtle)',
         fontSize: '0.9rem'
       }}>
-        Select or record a lecture to view compiled study materials.
+        Select or record a lecture.
       </div>
     );
   }
@@ -205,7 +205,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       return;
     }
 
-    const textToSpeak = `${title}. Executive Summary: ${notes?.summary || 'No summary compiled yet.'}`;
+    const textToSpeak = `${title}. ${notes?.summary || 'No summary yet.'}`;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.rate = 1.0;
@@ -292,13 +292,13 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       <head><title>${title}</title><style>body{font-family:Arial,sans-serif;line-height:1.6;padding:2rem;}h1{color:#0f172a;}h2{color:#2563eb;margin-top:1.5rem;}</style></head>
       <body>
         <h1>${title}</h1>
-        <p><strong>Subject:</strong> ${tag || 'General'} | <strong>Date:</strong> ${timestamp}</p>
+        <p><strong>${tag || 'General'}</strong> | ${timestamp}</p>
         <hr/>
-        <h2>Executive Summary</h2>
-        <p>${notes?.summary || 'No summary available.'}</p>
-        <h2>Key Concepts</h2>
+        <h2>Summary</h2>
+        <p>${notes?.summary || 'No summary.'}</p>
+        <h2>Key Terms</h2>
         <ul>${conceptsHtml}</ul>
-        <h2>Lecture Outline</h2>
+        <h2>Outline</h2>
         <ol>${outlineHtml}</ol>
         <h2>Transcript</h2>
         <p>${transcript}</p>
@@ -325,11 +325,11 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       .map(c => `• ${c.term}: ${c.definition}`)
       .join('\n');
     const sharePayload = [
-      `📚 ${title} (${tag || 'General'}) — ${timestamp}`,
+      `${title} (${tag || 'General'}) — ${timestamp}`,
       '',
-      `Summary: ${notes?.summary || 'No summary compiled.'}`,
-      conceptsText ? `\nKey Concepts:\n${conceptsText}` : '',
-      `\nOpen in LectureScribe: ${shareUrl}`
+      `Summary: ${notes?.summary || 'No summary.'}`,
+      conceptsText ? `\nKey Terms:\n${conceptsText}` : '',
+      `\n${shareUrl}`
     ]
       .filter(Boolean)
       .join('\n');
@@ -466,7 +466,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                 gap: '0.4rem'
               }}
             >
-              <span>Study Deck ({totalFlashcardsCount})</span>
+              <span>Study ({totalFlashcardsCount})</span>
             </button>
           )}
           {isEditing ? (
@@ -482,12 +482,12 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   fontWeight: 600
                 }}
               >
-                Save Changes
+                Save
               </button>
               <button
                 onClick={handleReanalyze}
                 disabled={isRecompiling}
-                title="Re-synthesize summary, key concepts, outline, and quiz questions from the edited transcript"
+                title="Re-generate AI notes from transcript"
                 style={{
                   padding: '0.45rem 0.85rem',
                   borderRadius: 'var(--radius-sm)',
@@ -499,7 +499,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   opacity: isRecompiling ? 0.6 : 1
                 }}
               >
-                {isRecompiling ? 'Re-Compiling...' : 'Re-Compile AI Notes'}
+                {isRecompiling ? 'Compiling...' : 'Re-Analyze'}
               </button>
               <button
                 onClick={() => setIsEditing(false)}
@@ -521,7 +521,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               {onToggleStarNote && (
                 <button
                   onClick={() => onToggleStarNote(note.id)}
-                  title={note.starred ? 'Unpin session' : 'Pin session to top'}
+                  title={note.starred ? 'Unpin session' : 'Pin session'}
                   style={{
                     padding: '0.45rem 0.75rem',
                     borderRadius: 'var(--radius-sm)',
@@ -555,7 +555,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   <button
                     onClick={handleReanalyze}
                     disabled={isRecompiling}
-                    title="Re-run AI synthesis on this lecture transcript"
+                    title="Re-run AI notes"
                     style={{
                       padding: '0.45rem 0.8rem',
                       borderRadius: 'var(--radius-sm)',
@@ -587,7 +587,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   gap: '0.4rem'
                 }}
               >
-                Export Word
+                Word
               </button>
 
               <button
@@ -605,7 +605,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   gap: '0.4rem'
                 }}
               >
-                Print / PDF
+                PDF
               </button>
 
               <button
@@ -623,13 +623,13 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   gap: '0.4rem'
                 }}
               >
-                {copiedShare ? 'Summary & Link Copied' : 'Share Notes'}
+                {copiedShare ? 'Copied' : 'Share'}
               </button>
 
               {onDeleteNote && (
                 <button
                   onClick={() => onDeleteNote(note.id)}
-                  title="Delete this session"
+                  title="Delete session"
                   style={{
                     padding: '0.45rem 0.7rem',
                     borderRadius: 'var(--radius-sm)',
@@ -662,8 +662,8 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
           gap: '0.75rem'
         }}>
           <div style={{ fontSize: '0.82rem', color: 'var(--text-main)', lineHeight: 1.5 }}>
-            <strong style={{ color: 'var(--warning)' }}>⏳ Offline Audio Recording Queued:</strong>{' '}
-            Your audio was safely saved on this device while offline. Connect to the internet to run Whisper AI transcription and compile study notes.
+            <strong style={{ color: 'var(--warning)' }}>Offline Audio Queued:</strong>{' '}
+            Saved locally. Connect online to transcribe and summarize.
           </div>
           {audioRecord?.blob && (
             <button
@@ -680,7 +680,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                 opacity: isSyncingOffline ? 0.65 : 1
               }}
             >
-              {isSyncingOffline ? 'Syncing & Transcribing...' : 'Sync Offline Audio Now'}
+              {isSyncingOffline ? 'Syncing...' : 'Sync Audio'}
             </button>
           )}
         </div>
@@ -699,7 +699,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
             <span style={{ fontSize: '0.76rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-              🎧 Recorded Lecture Audio
+              Lecture Audio
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginRight: '0.2rem' }}>Speed:</span>
@@ -732,7 +732,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                   marginLeft: '0.35rem'
                 }}
               >
-                Download Audio
+                Download
               </a>
             </div>
           </div>
@@ -745,11 +745,11 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         </div>
       )}
 
-      {/* Executive Summary */}
+      {/* Summary */}
       <section>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
           <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
-            Executive Summary
+            Summary
           </h3>
           {!isEditing && (
             <button
@@ -769,7 +769,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                 gap: '0.35rem'
               }}
             >
-              <span>{isSpeaking ? '⏹ Stop Audio' : '🔊 Listen to Summary'}</span>
+              <span>{isSpeaking ? 'Stop' : 'Listen'}</span>
             </button>
           )}
         </div>
@@ -793,7 +793,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
           />
         ) : (
           <p style={{ fontSize: '0.9rem', lineHeight: 1.7, color: 'var(--text-secondary)' }}>
-            {notes?.summary || 'No summary compiled yet.'}
+            {notes?.summary || 'No summary yet.'}
           </p>
         )}
       </section>
@@ -802,7 +802,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       {notes?.keyConcepts && notes.keyConcepts.length > 0 && (
         <section>
           <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-            Key Terminology & Definitions
+            Key Terms
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))', gap: '0.75rem' }}>
             {notes.keyConcepts.map((item, idx) => (
@@ -831,7 +831,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       {notes?.outline && notes.outline.length > 0 && (
         <section>
           <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
-            Session Outline
+            Outline
           </h3>
           <ol style={{ paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {notes.outline.map((point, idx) => (
@@ -858,7 +858,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
                 <h3 style={{ fontSize: '0.82rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
-                  Review Questions & Self-Test Quiz
+                  Quiz
                 </h3>
                 {quizMode === 'interactive' && (
                   <span style={{
@@ -870,7 +870,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                     color: answeredCount > 0 ? 'var(--success)' : 'var(--text-secondary)',
                     border: '1px solid var(--border-subtle)'
                   }}>
-                    Score: {correctCount} / {builtQuestions.length}
+                    {correctCount} / {builtQuestions.length}
                   </span>
                 )}
               </div>
@@ -890,7 +890,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                       color: 'var(--text-secondary)'
                     }}
                   >
-                    Reset Quiz
+                    Reset
                   </button>
                 )}
                 <button
@@ -906,7 +906,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                     color: 'var(--primary)'
                   }}
                 >
-                  {quizMode === 'interactive' ? 'Switch to Study Key' : 'Switch to Interactive Quiz'}
+                  {quizMode === 'interactive' ? 'Answer Key' : 'Quiz Mode'}
                 </button>
                 {quizMode === 'study' && (
                   <button
@@ -918,7 +918,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                       color: 'var(--primary)'
                     }}
                   >
-                    {revealAllAnswers ? 'Hide All' : 'Reveal All'}
+                    {revealAllAnswers ? 'Hide All' : 'Show All'}
                   </button>
                 )}
               </div>
@@ -1015,7 +1015,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                           lineHeight: 1.6
                         }}>
                           <strong style={{ color: chosen === q.correctIndex ? 'var(--success)' : 'var(--warning)' }}>
-                            {chosen === q.correctIndex ? 'Correct! ' : 'Explanation: '}
+                            {chosen === q.correctIndex ? 'Correct: ' : 'Answer: '}
                           </strong>
                           {q.answer}
                         </div>
@@ -1043,7 +1043,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
                       {q.question}
                     </summary>
                     <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: '0.82rem', lineHeight: 1.6 }}>
-                      <strong>Solution:</strong> {q.answer}
+                      <strong>Answer:</strong> {q.answer}
                     </div>
                   </details>
                 ))}
@@ -1066,7 +1066,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
             gap: '0.35rem'
           }}
         >
-          {showFullTranscript ? 'Hide Raw Transcript' : 'Show Raw Transcript'}
+          {showFullTranscript ? 'Hide Transcript' : 'Show Transcript'}
         </button>
 
         {showFullTranscript && (
@@ -1102,7 +1102,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               maxHeight: '280px',
               overflowY: 'auto'
             }}>
-              {transcript || 'No transcript text available.'}
+              {transcript || 'No transcript available.'}
             </div>
           )
         )}

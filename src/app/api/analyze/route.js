@@ -15,39 +15,37 @@ export async function POST(request) {
       // Fallback generator when running without an API key yet
       const words = transcript.split(/\s+/).filter(Boolean);
       return NextResponse.json({
-        summary: `This lecture covers core principles of ${title}. The discussion highlights fundamental topics, practical applications, and key analytical takeaways based on ${words.length} recorded words.`,
+        summary: `Covers core concepts of ${title} (${words.length} recorded words).`,
         keyConcepts: [
-          { term: title, definition: 'The central topic explored in this lecture session.' },
-          { term: subject, definition: 'The academic discipline framing the lecture contents.' },
-          { term: 'Core Principles', definition: 'The foundational frameworks introduced by the lecturer.' },
-          { term: 'Practical Application', definition: 'How the concepts apply to real-world problems and coursework.' }
+          { term: title, definition: 'Main lecture topic.' },
+          { term: subject, definition: 'Subject area.' },
+          { term: 'Core Principles', definition: 'Key frameworks covered in the lecture.' }
         ],
         outline: [
-          `Introduction to ${title} and scope`,
-          `Analysis of central themes and definitions`,
-          `Practical implications and illustrative examples`,
-          `Summary of conclusions and review points`
+          `Introduction to ${title}`,
+          'Key terms and examples',
+          'Takeaways'
         ],
         quizQuestions: [
           {
-            question: `What is the primary focus of this lecture on ${title}?`,
-            answer: `It introduces fundamental ideas, theories, and practical applications within ${subject}.`,
+            question: `What is the main focus of ${title}?`,
+            answer: `Core concepts and applications in ${subject}.`,
             options: [
-              `It introduces fundamental ideas, theories, and practical applications within ${subject}.`,
-              `It focuses exclusively on administrative syllabus grading policies.`,
-              `It reviews unrelated historical events outside of ${subject}.`,
-              `It only covers laboratory equipment maintenance procedures.`
+              `Core concepts and applications in ${subject}.`,
+              'Syllabus grading rules only.',
+              'Unrelated historical events.',
+              'Lab equipment maintenance.'
             ],
             correctIndex: 0
           },
           {
-            question: 'Why are the core principles covered in this lecture significant?',
-            answer: 'They establish the foundational understanding required for subsequent coursework and exams.',
+            question: 'Why are these core principles important?',
+            answer: 'They form the foundation for later coursework and exams.',
             options: [
-              'They are optional trivia not tested on exams.',
-              'They establish the foundational understanding required for subsequent coursework and exams.',
-              'They replace all practical laboratory sessions.',
-              'They only apply to postgraduate research.'
+              'They are never tested.',
+              'They form the foundation for later coursework and exams.',
+              'They replace all lab sessions.',
+              'They apply only to research.'
             ],
             correctIndex: 1
           }
@@ -57,32 +55,31 @@ export async function POST(request) {
 
     const groq = new Groq({ apiKey });
 
-    const systemPrompt = `You are an elite academic assistant and lecture note compiler. 
-Given a raw lecture transcript, analyze it thoroughly and respond ONLY with a valid, clean JSON object matching this exact schema:
+    const systemPrompt = `You are a concise lecture note compiler.
+Analyze the transcript and respond ONLY with valid JSON matching this schema, keeping every text field brief and scannable (no filler):
 {
-  "summary": "Concise, high-impact 2-4 sentence executive summary of the lecture",
+  "summary": "Brief 1-2 sentence summary (under 35 words)",
   "keyConcepts": [
-    { "term": "Term Name", "definition": "Clear, memorable academic definition" }
+    { "term": "Term", "definition": "Short 1-sentence definition (under 15 words)" }
   ],
   "outline": [
-    "Chronological topic 1 discussed",
-    "Chronological topic 2 discussed"
+    "Short 5-8 word bullet"
   ],
   "quizQuestions": [
     {
-      "question": "Active-recall review question for exam prep",
-      "answer": "Detailed, correct answer based on the lecture",
+      "question": "Short review question",
+      "answer": "Concise 1-sentence answer",
       "options": [
-        "Option A",
-        "Option B",
-        "Option C",
-        "Option D"
+        "Concise option A",
+        "Concise option B",
+        "Concise option C",
+        "Concise option D"
       ],
       "correctIndex": 0
     }
   ]
 }
-Generate 3 to 5 quizQuestions, where each question has 4 realistic multiple-choice options and correctIndex (0, 1, 2, or 3) pointing to the right option. Do not include any markdown formatting, backticks, or other text outside the JSON.`;
+Generate 3 to 4 quizQuestions with 4 concise options each and correctIndex (0-3). Keep outline to 3-5 short bullets. No markdown or text outside JSON.`;
 
     const completion = await groq.chat.completions.create({
       model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',

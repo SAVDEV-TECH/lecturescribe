@@ -11,8 +11,8 @@ export const viewport = {
 };
 
 export const metadata = {
-  title: 'LectureScribe AI — Smart Lecture Recording & Study Assistant',
-  description: 'Mobile lecture speech transcription powered by Groq Whisper, automated AI note generation, interactive flashcards, and student AI tutor.',
+  title: 'LectureScribe AI',
+  description: 'Lecture recording, Groq Whisper transcription, concise AI notes, and flashcards.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

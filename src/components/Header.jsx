@@ -87,9 +87,9 @@ export default function Header({
         border: '1px solid var(--border-subtle)'
       }}>
         {[
-          { id: 'workspace', label: 'Workspace' },
-          { id: 'study', label: 'Study & Review' },
-          { id: 'roadmap', label: 'System Overview' }
+          { id: 'workspace', label: 'Record' },
+          { id: 'study', label: 'Study' },
+          { id: 'roadmap', label: 'Overview' }
         ].map(tab => {
           const isActive = activeTab === tab.id;
           return (

@@ -90,7 +90,7 @@ export default function Home() {
       }
 
       if (authParam === 'success') {
-        showToast('Signed in successfully');
+        showToast('Signed in');
         const cleanUrl = window.location.pathname;
         window.history.replaceState({}, '', cleanUrl);
       }
@@ -235,7 +235,7 @@ export default function Home() {
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
     showToast(
       savedNote.pendingSync
-        ? `Offline audio saved for "${savedNote.title}"`
+        ? 'Saved offline audio'
         : `Saved "${savedNote.title}"`
     );
   };
@@ -245,7 +245,7 @@ export default function Home() {
     const updatedNotes = notes.map(n => (n.id === updatedNote.id ? updatedNote : n));
     setNotes(updatedNotes);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
-    showToast('Lecture notes updated');
+    showToast('Notes saved');
 
     if (isSupabaseConfigured() && user) {
       try {
@@ -276,7 +276,7 @@ export default function Home() {
     });
     setNotes(updatedNotes);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
-    showToast(becameStarred ? 'Pinned lecture to top' : 'Unpinned lecture');
+    showToast(becameStarred ? 'Pinned' : 'Unpinned');
   };
 
   // Handle Delete Note
@@ -285,7 +285,7 @@ export default function Home() {
     setNotes(remainingNotes);
     localStorage.setItem('ls_notes', JSON.stringify(remainingNotes));
     deleteAudioForNote(noteId);
-    showToast('Session removed');
+    showToast('Deleted');
 
     if (activeNoteId === noteId) {
       setActiveNoteId(remainingNotes[0]?.id || null);
@@ -477,7 +477,7 @@ export default function Home() {
         onLogout={handleLogout}
         onAuthSuccess={(u) => {
           setUser(u);
-          showToast('Signed in successfully');
+          showToast('Signed in');
         }}
       />
     </div>

@@ -1,73 +1,68 @@
 export const initialSeedNote = {
   id: 'seed-lecture-ai-101',
-  title: 'Intro to Artificial Intelligence & Neural Networks',
+  title: 'Intro to AI & Neural Networks',
   tag: 'Computer Science',
   timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-  transcript: `Welcome everyone to Computer Science 301. Today we begin our deep dive into modern Artificial Intelligence and Machine Learning. 
+  transcript: `Welcome to CS 301 on modern AI and Machine Learning. Early AI used symbolic rules and Alan Turing's 1950 Turing Test, which checks whether machine text conversation is indistinguishable from a human.
 
-Historically, AI began with symbolic reasoning and the Turing Test proposed by Alan Turing in 1950. The Turing Test posits that if a human interrogator cannot reliably tell a machine from a human through text conversation, the machine exhibits intelligent behavior.
-
-In modern times, we shifted from hand-crafted heuristic rules to Machine Learning. Machine Learning algorithms extract patterns directly from large datasets. Deep Learning takes this further through Artificial Neural Networks, loosely inspired by the biological architecture of human neurons. A neural network consists of an input layer, one or more hidden layers with non-linear activation functions, and an output layer.
-
-During training, the network adjusts its internal weights and biases using backpropagation and gradient descent to minimize a loss function. Next class, we will examine convolutional networks for computer vision and transformers for natural language processing.`,
+Machine Learning shifts from fixed rules to learning patterns from data. Neural Networks stack input, hidden, and output layers with non-linear activations, tuning weights via backpropagation and gradient descent to minimize error.`,
   notes: {
-    summary: 'An introductory survey of Artificial Intelligence tracing the evolution from Alan Turing\'s 1950 behavioral test to statistical Machine Learning and multi-layer Artificial Neural Networks trained via backpropagation and gradient descent.',
+    summary: 'Covers Turing’s 1950 test, data-driven machine learning, and neural networks trained via backpropagation.',
     keyConcepts: [
       {
         term: 'Turing Test',
-        definition: 'A benchmark test formulated by Alan Turing in 1950 testing whether an AI system can exhibit conversational behavior indistinguishable from a human.'
+        definition: 'Checks if a machine’s text replies are indistinguishable from a human’s.'
       },
       {
         term: 'Machine Learning',
-        definition: 'A computational paradigm where algorithms learn models directly from data patterns rather than explicit programmed instructions.'
+        definition: 'Algorithms that learn patterns from data instead of fixed rules.'
       },
       {
         term: 'Neural Network',
-        definition: 'A computational model structured with interconnected layers of artificial nodes that compute weighted sums through non-linear activation functions.'
+        definition: 'Layered nodes computing weighted sums via non-linear activations.'
       },
       {
         term: 'Backpropagation',
-        definition: 'The fundamental algorithm used to calculate loss function gradients with respect to each network weight, enabling model optimization.'
+        definition: 'Computes weight gradients so gradient descent reduces error.'
       }
     ],
     outline: [
-      'Historical foundation: Alan Turing (1950) & the Turing Test',
-      'Evolution from symbolic rules to statistical Machine Learning',
-      'Architecture of Artificial Neural Networks: input, hidden, and output layers',
-      'Training mechanics: Loss functions, gradient descent, and backpropagation',
-      'Preview of next lecture: Convolutional Networks and Transformers'
+      'Alan Turing (1950) & Turing Test',
+      'Symbolic rules vs. machine learning',
+      'Neural layers: input, hidden, output',
+      'Backpropagation & gradient descent'
     ],
     quizQuestions: [
       {
-        question: 'What is the primary condition required to pass the classical Turing Test?',
-        answer: 'A human interrogator communicating only via text cannot reliably determine whether the responder is a machine or a human.',
+        question: 'What passes the Turing Test?',
+        answer: 'A human judge cannot tell the machine apart via text.',
         options: [
-          'The machine must compute floating-point operations faster than a supercomputer.',
-          'A human interrogator communicating only via text cannot reliably determine whether the responder is a machine or a human.',
-          'The system must rely exclusively on hand-crafted symbolic rules without statistical data.',
-          'The AI must replicate biological neurons in physical hardware.'
+          'Running faster floating-point math than supercomputers.',
+          'A human judge cannot tell the machine apart via text.',
+          'Using only hand-coded symbolic rules.',
+          'Replicating biological neurons in hardware.'
         ],
         correctIndex: 1
       },
       {
-        question: 'How does backpropagation facilitate neural network training?',
-        answer: 'It calculates the mathematical gradient of the loss function with respect to weights, allowing gradient descent to iteratively minimize errors.',
+        question: 'What does backpropagation do?',
+        answer: 'It calculates weight gradients so gradient descent lowers error.',
         options: [
-          'It calculates the mathematical gradient of the loss function with respect to weights, allowing gradient descent to iteratively minimize errors.',
-          'It randomly deletes hidden layers until accuracy improves.',
-          'It converts text transcripts into audio waveforms.',
-          'It bypasses the activation functions during inference.'
+          'It calculates weight gradients so gradient descent lowers error.',
+          'It deletes hidden layers at random.',
+          'It turns transcripts into audio.',
+          'It skips activation functions.'
         ],
         correctIndex: 0
       },
       {
-        question: 'How does modern Machine Learning differ from early symbolic AI?',
-        answer: 'Machine Learning extracts patterns directly from large datasets rather than relying on hand-crafted heuristic rules.',
+        question: 'How does Machine Learning differ from symbolic AI?',
+        answer: 'It learns patterns from data instead of manual rules.',
         options: [
-          'Symbolic AI requires GPUs whereas Machine Learning runs only on paper.',
-          'Machine Learning extracts patterns directly from large datasets rather than relying on hand-crafted heuristic rules.',
-          'Machine Learning cannot use input or output layers.',
-          'There is no difference between symbolic AI and Machine Learning.'
+          'Symbolic AI needs GPUs while Machine Learning uses paper.',
+          'It learns patterns from data instead of manual rules.',
+          'Machine Learning cannot use layers.',
+          'There is no difference.'
         ],
         correctIndex: 1
       }

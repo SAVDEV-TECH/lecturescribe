@@ -115,7 +115,7 @@ export default function Sidebar({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search sessions or course codes..."
+              placeholder="Search sessions..."
               style={{
                 width: '100%',
                 padding: '0.45rem 0.65rem',
@@ -180,7 +180,7 @@ export default function Sidebar({
             letterSpacing: '0.06em',
             padding: '0.25rem 0.5rem 0.5rem'
           }}>
-            Recorded Sessions ({filteredNotes.length})
+            Sessions ({filteredNotes.length})
           </div>
 
           {filteredNotes.length === 0 ? (
@@ -192,8 +192,8 @@ export default function Sidebar({
               lineHeight: 1.5
             }}>
               {notes.length === 0
-                ? 'No sessions recorded yet. Start recording or upload an audio file.'
-                : 'No sessions match your search filter.'}
+                ? 'No sessions yet.'
+                : 'No matches.'}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -231,7 +231,7 @@ export default function Sidebar({
                         textOverflow: 'ellipsis',
                         flex: 1
                       }}>
-                        {note.title || 'Untitled Session'}
+                        {note.title || 'Untitled'}
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem', flexShrink: 0 }}>
@@ -303,7 +303,7 @@ export default function Sidebar({
                             fontWeight: 600,
                             fontSize: '0.66rem'
                           }}>
-                            ⏳ Offline
+                            Offline
                           </span>
                         )}
                       </div>
@@ -372,7 +372,7 @@ export default function Sidebar({
                 overflow: 'hidden',
                 textOverflow: 'ellipsis'
               }}>
-                {userInfo ? userInfo.name : 'Guest Session'}
+                {userInfo ? userInfo.name : 'Guest'}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                 <span style={{
@@ -384,7 +384,7 @@ export default function Sidebar({
                   flexShrink: 0
                 }}></span>
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {userInfo ? (userInfo.email || 'Cloud Sync') : 'Local Storage'}
+                  {userInfo ? (userInfo.email || 'Synced') : 'Local'}
                 </span>
               </div>
             </div>

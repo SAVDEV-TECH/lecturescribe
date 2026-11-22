@@ -12,7 +12,7 @@ export default function StudyDeck({ note }) {
   const [messages, setMessages] = useState([
     {
       sender: 'assistant',
-      text: `Welcome. I am ready to answer questions about "${note?.title || 'this session'}", generate practice prompts, or clarify terminology.`
+      text: `Ask about "${note?.title || 'this lecture'}" or pick a prompt.`
     }
   ]);
   const [inputMessage, setInputMessage] = useState('');
@@ -28,7 +28,7 @@ export default function StudyDeck({ note }) {
     setMessages([
       {
         sender: 'assistant',
-        text: `Welcome. I am ready to answer questions about "${note?.title || 'this session'}", generate practice prompts, or clarify terminology.`
+        text: `Ask about "${note?.title || 'this lecture'}" or pick a prompt.`
       }
     ]);
   }
@@ -38,7 +38,7 @@ export default function StudyDeck({ note }) {
   if (note?.notes?.keyConcepts) {
     note.notes.keyConcepts.forEach(item => {
       flashcards.push({
-        type: 'Key Definition',
+        type: 'Term',
         front: item.term,
         back: item.definition
       });
@@ -47,7 +47,7 @@ export default function StudyDeck({ note }) {
   if (note?.notes?.quizQuestions) {
     note.notes.quizQuestions.forEach(item => {
       flashcards.push({
-        type: 'Review Question',
+        type: 'Question',
         front: item.question,
         back: item.answer
       });
@@ -56,9 +56,9 @@ export default function StudyDeck({ note }) {
 
   if (flashcards.length === 0 && note) {
     flashcards.push({
-      type: 'Overview',
+      type: 'Summary',
       front: note.title,
-      back: note.notes?.summary || 'General overview of the session.'
+      back: note.notes?.summary || 'No summary yet.'
     });
   }
 
@@ -91,7 +91,7 @@ export default function StudyDeck({ note }) {
   if (!note) {
     return (
       <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-        Select a session to access review flashcards and the lecture assistant.
+        Select a lecture to study.
       </div>
     );
   }
@@ -112,7 +112,7 @@ export default function StudyDeck({ note }) {
     setMessages([
       {
         sender: 'assistant',
-        text: `Welcome. I am ready to answer questions about "${note?.title || 'this session'}", generate practice prompts, or clarify terminology.`
+        text: `Ask about "${note?.title || 'this lecture'}" or pick a prompt.`
       }
     ]);
   };
@@ -151,10 +151,10 @@ export default function StudyDeck({ note }) {
         const data = await res.json();
         setMessages([...newMessages, { sender: 'assistant', text: data.reply }]);
       } else {
-        setMessages([...newMessages, { sender: 'assistant', text: 'Unable to connect to assistant service. Please check network connection.' }]);
+        setMessages([...newMessages, { sender: 'assistant', text: 'Connection error. Try again.' }]);
       }
     } catch (e) {
-      setMessages([...newMessages, { sender: 'assistant', text: 'Error dispatching message.' }]);
+      setMessages([...newMessages, { sender: 'assistant', text: 'Failed to send.' }]);
     } finally {
       setIsSending(false);
     }
@@ -185,14 +185,14 @@ export default function StudyDeck({ note }) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div>
-              <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Review Flashcards</h2>
-              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Tap card or press Space to flip · Arrow keys to navigate</p>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Flashcards</h2>
+              <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>Tap or Space to flip · Arrows to move</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={speakCurrentCard}
-                title="Read current flashcard side aloud"
+                title="Read card aloud"
                 style={{
                   fontSize: '0.72rem',
                   fontWeight: 600,
@@ -203,7 +203,7 @@ export default function StudyDeck({ note }) {
                   border: '1px solid var(--border-subtle)'
                 }}
               >
-                🔊 Listen
+                Listen
               </button>
               <span style={{
                 fontSize: '0.72rem',
@@ -214,7 +214,7 @@ export default function StudyDeck({ note }) {
                 color: masteredIndices.length === flashcards.length ? 'var(--success)' : 'var(--text-secondary)',
                 border: '1px solid var(--border-subtle)'
               }}>
-                Mastered: {masteredIndices.length} / {flashcards.length}
+                {masteredIndices.length}/{flashcards.length} mastered
               </span>
               <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>
                 {activeIndex + 1} / {flashcards.length}
@@ -239,13 +239,13 @@ export default function StudyDeck({ note }) {
                   color: 'var(--primary)',
                   marginBottom: '0.75rem'
                 }}>
-                  {currentCard.type} {isCurrentMastered ? '· ✓ Mastered' : ''}
+                  {currentCard.type} {isCurrentMastered ? '· Mastered' : ''}
                 </span>
                 <div style={{ fontSize: '1.08rem', fontWeight: 700, lineHeight: 1.4, color: 'var(--text-main)', textAlign: 'center' }}>
                   {currentCard.front}
                 </div>
                 <div style={{ marginTop: '1.25rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  Tap to reveal answer
+                  Tap to flip
                 </div>
               </div>
 
@@ -259,13 +259,10 @@ export default function StudyDeck({ note }) {
                   color: 'var(--success)',
                   marginBottom: '0.75rem'
                 }}>
-                  Answer & Explanation
+                  Answer
                 </span>
                 <div style={{ fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-main)', textAlign: 'center' }}>
                   {currentCard.back}
-                </div>
-                <div style={{ marginTop: '1.25rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  Tap to flip back
                 </div>
               </div>
             </div>
@@ -286,7 +283,7 @@ export default function StudyDeck({ note }) {
               color: 'var(--text-main)'
             }}
           >
-            Previous
+            Prev
           </button>
 
           <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -302,7 +299,7 @@ export default function StudyDeck({ note }) {
                 color: 'var(--primary)'
               }}
             >
-              Flip Card
+              Flip
             </button>
             <button
               onClick={toggleMastered}
@@ -316,7 +313,7 @@ export default function StudyDeck({ note }) {
                 color: isCurrentMastered ? 'var(--success)' : 'var(--text-secondary)'
               }}
             >
-              {isCurrentMastered ? '✓ Mastered' : 'Mark Mastered'}
+              {isCurrentMastered ? 'Mastered' : 'Mark Known'}
             </button>
           </div>
 
@@ -357,10 +354,10 @@ export default function StudyDeck({ note }) {
         }}>
           <div>
             <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>
-              Lecture Assistant
+              AI Tutor
             </h2>
             <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-              Ask questions regarding topics covered in this session
+              Ask about this lecture
             </p>
           </div>
           {messages.length > 1 && (
@@ -376,7 +373,7 @@ export default function StudyDeck({ note }) {
                 fontWeight: 500
               }}
             >
-              Reset Chat
+              Reset
             </button>
           )}
         </div>
@@ -384,9 +381,9 @@ export default function StudyDeck({ note }) {
         {/* Quick prompt pills */}
         <div style={{ display: 'flex', gap: '0.4rem', overflowX: 'auto', paddingBottom: '0.5rem', marginBottom: '0.5rem' }}>
           {[
-            'Summarize in three points',
-            'Generate a practice question',
-            'Clarify core concepts'
+            '3-point summary',
+            'Practice question',
+            'Explain key terms'
           ].map((pill, idx) => (
             <button
               key={idx}
@@ -428,7 +425,7 @@ export default function StudyDeck({ note }) {
           ))}
           {isSending && (
             <div style={{ alignSelf: 'flex-start', fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <div className="spinner" /> Processing request...
+              <div className="spinner" /> Thinking...
             </div>
           )}
         </div>
@@ -440,7 +437,7 @@ export default function StudyDeck({ note }) {
             value={inputMessage}
             onChange={(e) => setInputMessage(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder="Type a question about this session..."
+            placeholder="Ask a question..."
             style={{
               flex: 1,
               padding: '0.65rem 0.85rem',
@@ -464,7 +461,7 @@ export default function StudyDeck({ note }) {
               opacity: isSending || !inputMessage.trim() ? 0.6 : 1
             }}
           >
-            Submit
+            Send
           </button>
         </div>
       </div>

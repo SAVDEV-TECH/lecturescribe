@@ -46,9 +46,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
 
     if (!supabaseReady) {
       setIsError(true);
-      setMessage(
-        'Supabase Auth is not configured yet. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your environment variables (and enable Google Provider in Supabase Dashboard) to sign in with Google.'
-      );
+      setMessage('Supabase Auth is not configured.');
       return;
     }
 
@@ -68,7 +66,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
     } catch (err) {
       console.error('Google OAuth error:', err);
       setIsError(true);
-      setMessage(err.message || 'Failed to launch Google Sign-In. Please check your Supabase Google OAuth provider settings.');
+      setMessage(err.message || 'Google sign-in failed.');
       setGoogleLoading(false);
     }
   };
@@ -81,9 +79,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
 
     if (!supabaseReady) {
       setIsError(true);
-      setMessage(
-        'Supabase Auth is not configured yet. Please add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel to enable authentication.'
-      );
+      setMessage('Supabase Auth is not configured.');
       return;
     }
 
@@ -96,7 +92,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
         });
         if (error) throw error;
         setIsError(false);
-        setMessage('Password reset link sent to your email. Please check your inbox.');
+        setMessage('Password reset link sent.');
       } else if (authMode === 'register') {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
@@ -113,7 +109,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
 
         if (data?.user && !data?.session) {
           setIsError(false);
-          setMessage('Account created! Please check your email inbox to confirm your address before signing in.');
+          setMessage('Check your email to confirm, then sign in.');
           setAuthMode('signin');
         } else if (data?.user) {
           onAuthSuccess(data.user);
@@ -135,7 +131,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
     } catch (err) {
       console.error('Auth error:', err);
       setIsError(true);
-      setMessage(err.message || 'Authentication failed. Please check your credentials.');
+      setMessage(err.message || 'Sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -183,7 +179,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
         {userInfo ? (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Your Account</h2>
+              <h2 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Account</h2>
               <button onClick={onClose} aria-label="Close modal" style={{ color: 'var(--text-muted)' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -257,7 +253,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                       color: 'var(--success)',
                     }}
                   >
-                    ● Cloud Sync Active
+                    Synced
                   </span>
                   <span
                     style={{
@@ -271,7 +267,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                       textTransform: 'capitalize',
                     }}
                   >
-                    {userInfo.provider === 'google' ? 'Google Account' : 'Email Account'}
+                    {userInfo.provider === 'google' ? 'Google' : 'Email'}
                   </span>
                 </div>
               </div>
@@ -304,15 +300,15 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
               <div>
                 <h2 style={{ fontSize: '1.2rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
                   {authMode === 'register'
-                    ? 'Create an account'
+                    ? 'Create account'
                     : authMode === 'reset'
                     ? 'Reset password'
-                    : 'Sign in to LectureScribe'}
+                    : 'Sign in'}
                 </h2>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
                   {authMode === 'reset'
-                    ? 'Enter your email to receive a password reset link'
-                    : 'Sync your lecture recordings, notes, and study decks across devices'}
+                    ? 'Enter your email for a reset link'
+                    : 'Sync notes across devices'}
                 </p>
               </div>
               <button onClick={onClose} aria-label="Close modal" style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>
@@ -336,8 +332,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                   marginBottom: '1rem',
                 }}
               >
-                <strong>Setup Required:</strong> Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
-                <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in your Vercel Environment Variables and enable the Google provider in Supabase Auth.
+                <strong>Setup needed:</strong> Set Supabase env vars in Vercel.
               </div>
             )}
 
@@ -398,7 +393,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                       d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.25 2.64 1.26 6.61l4.01 3.15c.95-2.85 3.6-4.96 6.73-4.96z"
                     />
                   </svg>
-                  {googleLoading ? 'Redirecting to Google...' : 'Continue with Google'}
+                  {googleLoading ? 'Redirecting...' : 'Continue with Google'}
                 </button>
 
                 {/* Divider */}
@@ -412,7 +407,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                 >
                   <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-subtle)' }}></div>
                   <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    or continue with email
+                    or email
                   </span>
                   <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-subtle)' }}></div>
                 </div>
@@ -440,13 +435,13 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
               {authMode === 'register' && (
                 <div>
                   <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '0.3rem', fontWeight: 600 }}>
-                    FULL NAME
+                    NAME
                   </label>
                   <input
                     type="text"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Your full name"
+                    placeholder="Your name"
                     style={{
                       width: '100%',
                       padding: '0.65rem 0.85rem',
@@ -463,7 +458,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: '0.3rem', fontWeight: 600 }}>
-                  EMAIL ADDRESS
+                  EMAIL
                 </label>
                 <input
                   type="email"
@@ -500,7 +495,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                         }}
                         style={{ fontSize: '0.74rem', color: 'var(--primary)', fontWeight: 600 }}
                       >
-                        Forgot password?
+                        Forgot?
                       </button>
                     )}
                   </div>
@@ -510,7 +505,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                     minLength={6}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
+                    placeholder="6+ characters"
                     style={{
                       width: '100%',
                       padding: '0.65rem 0.85rem',
@@ -544,7 +539,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                   : authMode === 'register'
                   ? 'Create Account'
                   : authMode === 'reset'
-                  ? 'Send Reset Link'
+                  ? 'Send Link'
                   : 'Sign In'}
               </button>
             </form>
@@ -560,11 +555,11 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                   }}
                   style={{ color: 'var(--primary)', fontWeight: 600 }}
                 >
-                  ← Back to Sign In
+                  Back
                 </button>
               ) : (
                 <>
-                  {authMode === 'register' ? 'Already have an account?' : "Don't have an account?"}{' '}
+                  {authMode === 'register' ? 'Have an account?' : 'New here?'}{' '}
                   <button
                     type="button"
                     onClick={() => {
@@ -574,7 +569,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, onLogout, us
                     }}
                     style={{ color: 'var(--primary)', fontWeight: 600 }}
                   >
-                    {authMode === 'register' ? 'Sign in' : 'Create an account'}
+                    {authMode === 'register' ? 'Sign in' : 'Create account'}
                   </button>
                 </>
               )}

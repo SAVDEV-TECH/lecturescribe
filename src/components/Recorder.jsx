@@ -204,7 +204,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     let pendingSync = isOffline;
 
     if (!isOffline) {
-      setStatusMessage('Transcribing lecture with Groq Whisper V3...');
+      setStatusMessage('Transcribing...');
       try {
         const formData = new FormData();
         formData.append('file', audioBlobOrFile, uploadFileName);
@@ -239,16 +239,16 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       finalTranscript = pendingSync
-        ? fallbackText || `[Offline Audio Queued] Recording saved locally for "${effectiveTitle}". Tap "Sync Offline Audio" when back online to run Whisper AI transcription.`
+        ? fallbackText || `Saved offline: "${effectiveTitle}". Connect online and tap Sync Audio.`
         : fallbackText ||
-          `Recorded lecture on "${effectiveTitle}" (${resolvedSubject}). Enable GROQ_API_KEY in .env.local to transcribe audio files automatically with Whisper Large V3 Turbo.`;
+          `Recorded "${effectiveTitle}" (${resolvedSubject}). Add GROQ_API_KEY in .env.local for transcription.`;
     }
 
     setLiveTranscript(finalTranscript);
 
     let notesData = null;
     if (!pendingSync) {
-      setStatusMessage('Analyzing transcript and compiling study notes...');
+      setStatusMessage('Generating notes...');
       try {
         const analyzeRes = await fetch('/api/analyze', {
           method: 'POST',
@@ -268,7 +268,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }
     } else {
       notesData = {
-        summary: 'Audio recorded offline and safely stored on your device. Connect to the internet and tap "Sync Offline Audio" to transcribe and compile full AI notes.',
+        summary: 'Saved offline. Connect online and tap Sync Audio to transcribe.',
         keyConcepts: [],
         outline: [],
         quizQuestions: []
@@ -291,8 +291,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setIsProcessing(false);
     setStatusMessage(
       pendingSync
-        ? 'Offline audio saved locally — ready to sync when online'
-        : 'Session saved and compiled successfully'
+        ? 'Saved offline — sync when online'
+        : 'Saved'
     );
   };
 
@@ -314,7 +314,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }
 
       setIsPaused(false);
-      setStatusMessage('Recording resumed');
+      setStatusMessage('Resumed');
       timerIntervalRef.current = setInterval(() => {
         if (startTimeRef.current) {
           const elapsed = Math.floor(
@@ -330,7 +330,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
       lastPauseTimestampRef.current = Date.now();
       setIsPaused(true);
-      setStatusMessage('Recording paused');
+      setStatusMessage('Paused');
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     }
   };
@@ -360,11 +360,11 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
 
       const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const effectiveTitle = title.trim() || `Lecture on ${resolvedSubject}`;
+      const effectiveTitle = title.trim() || `${resolvedSubject} Lecture`;
       const fallbackText =
         liveTranscript ||
         accumulatedWebSpeechRef.current ||
-        'Recorded session. Audio stream was silent or no speech was detected.';
+        'No speech detected.';
 
       await processAudioAndCompile(audioBlob, `lecture.${fileExt}`, fallbackText, effectiveTitle);
     };
@@ -472,7 +472,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         navigator.vibrate([40]);
       }
 
-      setStatusMessage('Requesting microphone access...');
+      setStatusMessage('Allow mic access...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -535,7 +535,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       startTimeRef.current = Date.now();
       accumulatedPausedDurationRef.current = 0;
       lastPauseTimestampRef.current = null;
-      setStatusMessage('Recording active (Safe to lock or turn off screen)');
+      setStatusMessage('Recording (safe to lock screen)');
 
       timerIntervalRef.current = setInterval(() => {
         if (startTimeRef.current) {
@@ -547,7 +547,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }, 1000);
     } catch (err) {
       console.error('Audio capture error:', err);
-      setStatusMessage('Microphone access denied. Please grant permission in browser settings.');
+      setStatusMessage('Mic access denied.');
     }
   };
 
@@ -561,7 +561,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     // Groq Whisper API max file size is 25 MB
     const maxBytes = 25 * 1024 * 1024;
     if (file.size > maxBytes) {
-      setStatusMessage('Audio file exceeds the 25 MB limit. Please upload a compressed audio file (e.g. MP3/M4A).');
+      setStatusMessage('File exceeds 25 MB. Use MP3 or M4A.');
       return;
     }
 
@@ -570,7 +570,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       .replace(/[_-]+/g, ' ')
       .trim();
 
-    const effectiveTitle = title.trim() || derivedTitle || `Lecture on ${resolvedSubject}`;
+    const effectiveTitle = title.trim() || derivedTitle || `${resolvedSubject} Lecture`;
     if (!title.trim() && derivedTitle) {
       setTitle(derivedTitle);
     }
@@ -578,7 +578,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     await processAudioAndCompile(
       file,
       file.name,
-      `Uploaded audio file "${file.name}" for ${effectiveTitle} (${resolvedSubject}).`,
+      `Audio file: ${file.name} (${resolvedSubject}).`,
       effectiveTitle
     );
   };
@@ -587,10 +587,10 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     const cleanText = pastedText.trim();
     if (!cleanText || isProcessing) return;
 
-    const effectiveTitle = title.trim() || `Lecture on ${resolvedSubject}`;
+    const effectiveTitle = title.trim() || `${resolvedSubject} Lecture`;
     setIsProcessing(true);
     setLiveTranscript(cleanText);
-    setStatusMessage('Analyzing transcript and compiling study notes...');
+    setStatusMessage('Generating notes...');
 
     let notesData = null;
     try {
@@ -624,7 +624,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setIsProcessing(false);
     setShowPasteBox(false);
     setPastedText('');
-    setStatusMessage('Session saved and compiled successfully');
+    setStatusMessage('Saved');
   };
 
   return (
@@ -695,8 +695,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               lineHeight: 1.5,
               maxWidth: '260px'
             }}>
-              Screen Off / OLED Stealth Mode<br />
-              <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Double-tap anywhere to restore screen</span>
+              Screen Off<br />
+              <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Double-tap to wake</span>
             </div>
           </div>
 
@@ -714,7 +714,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               border: '1px solid #334155'
             }}
           >
-            Exit Stealth Screen
+            Exit
           </button>
         </div>
       )}
@@ -727,14 +727,14 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }} className="recorder-meta-grid">
         <div className="recorder-title-col" style={{ gridColumn: 'span 2' }}>
           <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
-            SESSION TITLE
+            TITLE
           </label>
           <input
             ref={titleInputRef}
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Molecular Biology: DNA Replication"
+            placeholder="Lecture title"
             disabled={isRecording}
             style={{
               width: '100%',
@@ -751,7 +751,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
         <div>
           <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
-            SUBJECT / COURSE
+            SUBJECT
           </label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
             <select
@@ -775,14 +775,14 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               <option value="Economics & Finance">Economics & Finance</option>
               <option value="Law & Governance">Law & Governance</option>
               <option value="General Studies">General Studies</option>
-              <option value="__custom__">+ Custom Course / Tag...</option>
+              <option value="__custom__">+ Custom...</option>
             </select>
             {subject === '__custom__' && (
               <input
                 type="text"
                 value={customSubject}
                 onChange={(e) => setCustomSubject(e.target.value)}
-                placeholder="e.g. CSC 301, BIO 102, Physics"
+                placeholder="Course or tag"
                 disabled={isRecording}
                 style={{
                   width: '100%',
@@ -801,7 +801,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
         <div>
           <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 700, letterSpacing: '0.05em' }}>
-            AUDIO LANGUAGE
+            LANGUAGE
           </label>
           <select
             value={language}
@@ -882,7 +882,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               gap: '0.4rem',
               marginTop: '0.2rem'
             }}>
-              <span>{isRecording ? (isPaused ? 'PAUSED' : 'LIVE RECORDING') : 'READY'}</span>
+              <span>{isRecording ? (isPaused ? 'PAUSED' : 'RECORDING') : 'READY'}</span>
               {isRecording && !isPaused && (
                 <span style={{
                   display: 'inline-block',
@@ -931,7 +931,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 type="button"
                 onClick={() => setShowPasteBox(!showPasteBox)}
                 disabled={isProcessing}
-                title="Paste lecture slides, textbook excerpts, or raw text to compile AI study notes"
+                title="Paste lecture notes or text"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -953,14 +953,14 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                   <line x1="16" y1="13" x2="8" y2="13"></line>
                   <line x1="16" y1="17" x2="8" y2="17"></line>
                 </svg>
-                <span>Paste Text</span>
+                <span>Paste</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
-                title="Upload a pre-recorded lecture audio file (MP3, WAV, M4A, WebM)"
+                title="Upload audio file (MP3, WAV, M4A, WebM)"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -981,7 +981,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                   <polyline points="17 8 12 3 7 8"></polyline>
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                <span>Upload Audio</span>
+                <span>Upload</span>
               </button>
 
               <button
@@ -1006,7 +1006,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="12" cy="12" r="8" />
                 </svg>
-                <span>Start Recording</span>
+                <span>Record</span>
               </button>
             </>
           ) : (
@@ -1014,7 +1014,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
               {/* Screen Off / Stealth button for mobile battery saving */}
               <button
                 onClick={() => setIsStealthMode(true)}
-                title="Blackout display to record with screen light off"
+                title="Blackout screen while recording"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1069,7 +1069,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                   fontSize: '0.86rem',
                 }}
               >
-                Complete & Summarize
+                Stop & Save
               </button>
             </>
           )}
@@ -1089,7 +1089,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Paste Lecture Transcript, Handout, or Slide Notes
+              Paste Text or Notes
             </span>
             <button
               type="button"
@@ -1102,7 +1102,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           <textarea
             value={pastedText}
             onChange={(e) => setPastedText(e.target.value)}
-            placeholder="Paste raw lecture text, syllabus notes, or slide contents here to generate structured summaries, key terminology, and active-recall flashcards..."
+            placeholder="Paste notes, transcript, or slides..."
             rows={5}
             style={{
               width: '100%',
@@ -1132,7 +1132,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                 opacity: isProcessing || !pastedText.trim() ? 0.6 : 1
               }}
             >
-              {isProcessing ? 'Compiling...' : 'Compile Study Notes'}
+              {isProcessing ? 'Generating...' : 'Generate Notes'}
             </button>
           </div>
         </div>
@@ -1159,8 +1159,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           </svg>
           <span>
             {isRecording
-              ? 'Background Audio Active: You can safely turn off phone screen light or switch apps.'
-              : 'Screen-Off Mode Supported: Recording keeps streaming even when phone display is locked.'}
+              ? 'Background active — safe to lock screen.'
+              : 'Records even with screen locked.'}
           </span>
         </div>
 
@@ -1171,7 +1171,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
             onChange={(e) => setKeepScreenAwake(e.target.checked)}
             style={{ cursor: 'pointer' }}
           />
-          <span>Keep Screen Awake</span>
+          <span>Keep Awake</span>
         </label>
       </div>
 
@@ -1201,10 +1201,10 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           overflowY: 'auto'
         }}>
           <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.35rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Live Speech Feed:
+            Live Transcript
           </div>
           <p style={{ fontSize: '0.85rem', lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-            {liveTranscript || 'Listening for speech input...'}
+            {liveTranscript || 'Listening...'}
           </p>
         </div>
       )}

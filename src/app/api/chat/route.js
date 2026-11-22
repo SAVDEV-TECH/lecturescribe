@@ -14,18 +14,18 @@ export async function POST(request) {
     if (!apiKey) {
       // Fallback assistant response when no API key configured
       return NextResponse.json({
-        reply: `I am your Lecture AI Tutor for "${noteTitle}". Since a Groq API key hasn't been set in .env.local yet, I am running in preview mode. Set your free key to unlock instant contextual Q&A on this transcript!`
+        reply: `Preview mode for "${noteTitle}". Add GROQ_API_KEY in .env.local for live Q&A.`
       });
     }
 
     const groq = new Groq({ apiKey });
 
-    const systemPrompt = `You are a patient, encouraging academic tutor helping a university student understand their lecture on "${noteTitle}".
-Base your answers primarily on the following lecture transcript:
+    const systemPrompt = `You are a concise lecture tutor for "${noteTitle}".
+Base answers on this transcript:
 """
 ${transcript.slice(0, 12000)}
 """
-Keep your explanations clear, structured, and easy to memorize for exams. If the question asks about something not mentioned in the transcript, mention that it was not covered in this lecture and provide helpful general context.`;
+Keep replies brief and scannable (2-4 short sentences or bullets unless asked for more). Note clearly if a topic is not in the transcript.`;
 
     const completion = await groq.chat.completions.create({
       model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',
@@ -37,7 +37,7 @@ Keep your explanations clear, structured, and easy to memorize for exams. If the
         }))
       ],
       temperature: 0.4,
-      max_tokens: 800
+      max_tokens: 450
     });
 
     const reply = completion.choices[0].message.content;

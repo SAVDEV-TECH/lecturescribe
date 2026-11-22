@@ -49,7 +49,7 @@ export default function AuthCallbackPage() {
       } catch (err) {
         console.error('OAuth callback error:', err);
         if (isMounted) {
-          setErrorMessage(err.message || 'Unable to complete Google sign-in session.');
+          setErrorMessage(err.message || 'Google sign-in failed.');
         }
       }
     };
@@ -99,7 +99,7 @@ export default function AuthCallbackPage() {
               !
             </div>
             <h1 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-              Google Sign-In Error
+              Sign-In Error
             </h1>
             <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '1.25rem' }}>
               {errorMessage}
@@ -116,7 +116,7 @@ export default function AuthCallbackPage() {
                 fontSize: '0.86rem'
               }}
             >
-              Return to Workspace
+              Back
             </button>
           </>
         ) : (
@@ -131,10 +131,10 @@ export default function AuthCallbackPage() {
               animation: 'spin 0.8s linear infinite'
             }} />
             <h1 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '0.35rem' }}>
-              Completing Google Sign-In...
+              Signing in...
             </h1>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-              Syncing your account and lecture workspace.
+              Syncing workspace.
             </p>
           </>
         )}
