@@ -55,6 +55,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
   const [audioRecord, setAudioRecord] = useState(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isSyncingOffline, setIsSyncingOffline] = useState(false);
+  const [actionError, setActionError] = useState('');
   const audioPlayerRef = useRef(null);
 
   // Edit mode state
@@ -77,6 +78,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     setAudioRecord(null);
     setPlaybackRate(1);
     setIsSyncingOffline(false);
+    setActionError('');
     setEditTitle(note?.title || '');
     setEditTag(note?.tag || 'General Studies');
     setEditSummary(note?.notes?.summary || '');
@@ -251,6 +253,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     if (!activeTranscript || !activeTranscript.trim() || isRecompiling || !onUpdateNote) return;
 
     setIsRecompiling(true);
+    setActionError('');
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -275,9 +278,17 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         setEditSummary(compiledNotes?.summary || '');
         setSelectedAnswers({});
         setIsEditing(false);
+      } else {
+        let msg = `Analysis failed (${res.status}).`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) msg = errData.error;
+        } catch {}
+        setActionError(msg);
       }
     } catch (e) {
       console.warn('Re-compile analysis error:', e);
+      setActionError(e?.message || 'Network error while analyzing notes.');
     } finally {
       setIsRecompiling(false);
     }
@@ -647,6 +658,19 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="no-print" style={{
+          padding: '0.65rem 0.9rem',
+          borderRadius: 'var(--radius-sm)',
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
+          border: '1px solid var(--danger)',
+          color: 'var(--danger)',
+          fontSize: '0.8rem'
+        }}>
+          {actionError}
+        </div>
+      )}
 
       {/* Offline Recording Queue Sync Banner */}
       {isOfflineQueued && (

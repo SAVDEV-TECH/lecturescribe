@@ -187,6 +187,35 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setMediaSessionPlaybackState('none');
   };
 
+  // Shared AI note synthesis helper that surfaces API error details
+  const synthesizeNotes = async (transcriptText, effectiveTitle) => {
+    try {
+      const analyzeRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: transcriptText,
+          title: effectiveTitle,
+          subject: resolvedSubject
+        })
+      });
+
+      if (analyzeRes.ok) {
+        return { notesData: await analyzeRes.json(), error: '' };
+      }
+
+      let message = `Analysis failed (${analyzeRes.status}).`;
+      try {
+        const errData = await analyzeRes.json();
+        if (errData?.error) message = errData.error;
+      } catch {}
+      return { notesData: null, error: message };
+    } catch (err) {
+      console.error('Analysis error:', err);
+      return { notesData: null, error: err?.message || 'Network error during analysis.' };
+    }
+  };
+
   // Shared transcription + AI note synthesis pipeline (with IndexedDB audio playback & offline queue)
   const processAudioAndCompile = async (audioBlobOrFile, uploadFileName, fallbackText, effectiveTitle) => {
     setIsProcessing(true);
@@ -247,25 +276,12 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setLiveTranscript(finalTranscript);
 
     let notesData = null;
+    let analysisError = '';
     if (!pendingSync) {
       setStatusMessage('Generating notes...');
-      try {
-        const analyzeRes = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            transcript: finalTranscript,
-            title: effectiveTitle,
-            subject: resolvedSubject
-          })
-        });
-
-        if (analyzeRes.ok) {
-          notesData = await analyzeRes.json();
-        }
-      } catch (err) {
-        console.error('Analysis error:', err);
-      }
+      const result = await synthesizeNotes(finalTranscript, effectiveTitle);
+      notesData = result.notesData;
+      analysisError = result.error;
     } else {
       notesData = {
         summary: 'Saved offline. Connect online and tap Sync Audio to transcribe.',
@@ -292,6 +308,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setStatusMessage(
       pendingSync
         ? 'Saved offline — sync when online'
+        : analysisError
+        ? `Saved (analysis error: ${analysisError})`
         : 'Saved'
     );
   };
@@ -592,24 +610,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setLiveTranscript(cleanText);
     setStatusMessage('Generating notes...');
 
-    let notesData = null;
-    try {
-      const analyzeRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript: cleanText,
-          title: effectiveTitle,
-          subject: resolvedSubject
-        })
-      });
-
-      if (analyzeRes.ok) {
-        notesData = await analyzeRes.json();
-      }
-    } catch (err) {
-      console.error('Analysis error:', err);
-    }
+    const { notesData, error: analysisError } = await synthesizeNotes(cleanText, effectiveTitle);
 
     const newNote = {
       id: 'lecture_' + Date.now(),
@@ -624,7 +625,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     setIsProcessing(false);
     setShowPasteBox(false);
     setPastedText('');
-    setStatusMessage('Saved');
+    setStatusMessage(analysisError ? `Saved (analysis error: ${analysisError})` : 'Saved');
   };
 
   return (

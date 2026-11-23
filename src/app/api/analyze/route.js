@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Groq from 'groq-sdk';
+import { createChatCompletionWithFallback, parseModelJson } from '@/lib/groqClient';
 
 export async function POST(request) {
   try {
@@ -53,8 +53,6 @@ export async function POST(request) {
       });
     }
 
-    const groq = new Groq({ apiKey });
-
     const systemPrompt = `You are a concise lecture note compiler.
 Analyze the transcript and respond ONLY with valid JSON matching this schema, keeping every text field brief and scannable (no filler):
 {
@@ -81,21 +79,25 @@ Analyze the transcript and respond ONLY with valid JSON matching this schema, ke
 }
 Generate 3 to 4 quizQuestions with 4 concise options each and correctIndex (0-3). Keep outline to 3-5 short bullets. No markdown or text outside JSON.`;
 
-    const completion = await groq.chat.completions.create({
-      model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',
+    const { content } = await createChatCompletionWithFallback(apiKey, {
       messages: [
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: `Course: ${subject}\nLecture Title: ${title}\n\nTranscript:\n${transcript}`
+          content: `Course: ${subject}\nLecture Title: ${title}\n\nTranscript:\n${transcript.slice(0, 24000)}`
         }
       ],
       response_format: { type: 'json_object' },
       temperature: 0.2
     });
 
-    const parsed = JSON.parse(completion.choices[0].message.content);
-    return NextResponse.json(parsed);
+    const parsed = parseModelJson(content);
+    return NextResponse.json({
+      summary: typeof parsed?.summary === 'string' ? parsed.summary : '',
+      keyConcepts: Array.isArray(parsed?.keyConcepts) ? parsed.keyConcepts : [],
+      outline: Array.isArray(parsed?.outline) ? parsed.outline : [],
+      quizQuestions: Array.isArray(parsed?.quizQuestions) ? parsed.quizQuestions : [],
+    });
   } catch (error) {
     console.error('Groq analysis error:', error);
     return NextResponse.json(

@@ -151,7 +151,12 @@ export default function StudyDeck({ note }) {
         const data = await res.json();
         setMessages([...newMessages, { sender: 'assistant', text: data.reply }]);
       } else {
-        setMessages([...newMessages, { sender: 'assistant', text: 'Connection error. Try again.' }]);
+        let errorMsg = 'Unable to reach AI tutor. Try again.';
+        try {
+          const errData = await res.json();
+          if (errData?.error) errorMsg = `Tutor error: ${errData.error}`;
+        } catch {}
+        setMessages([...newMessages, { sender: 'assistant', text: errorMsg }]);
       }
     } catch (e) {
       setMessages([...newMessages, { sender: 'assistant', text: 'Failed to send.' }]);

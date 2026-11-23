@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Groq from 'groq-sdk';
+import { createChatCompletionWithFallback } from '@/lib/groqClient';
 
 export async function POST(request) {
   try {
@@ -18,8 +18,6 @@ export async function POST(request) {
       });
     }
 
-    const groq = new Groq({ apiKey });
-
     const systemPrompt = `You are a concise lecture tutor for "${noteTitle}".
 Base answers on this transcript:
 """
@@ -27,8 +25,7 @@ ${transcript.slice(0, 12000)}
 """
 Keep replies brief and scannable (2-4 short sentences or bullets unless asked for more). Note clearly if a topic is not in the transcript.`;
 
-    const completion = await groq.chat.completions.create({
-      model: process.env.GROQ_LLM_MODEL || 'llama-3.3-70b-versatile',
+    const { content: reply } = await createChatCompletionWithFallback(apiKey, {
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages.map(m => ({
@@ -37,10 +34,9 @@ Keep replies brief and scannable (2-4 short sentences or bullets unless asked fo
         }))
       ],
       temperature: 0.4,
-      max_tokens: 450
+      max_tokens: 1024
     });
 
-    const reply = completion.choices[0].message.content;
     return NextResponse.json({ reply });
   } catch (error) {
     console.error('Groq tutor chat error:', error);

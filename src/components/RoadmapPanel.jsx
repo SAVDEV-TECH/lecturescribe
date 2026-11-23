@@ -61,7 +61,7 @@ export default function RoadmapPanel({ onTryFeature }) {
           System Overview
         </h2>
         <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)' }}>
-          Next.js, Whisper Large V3, Llama 3.3 70B, and Supabase.
+          Next.js, Whisper Large V3, Groq AI, and Supabase.
         </p>
       </div>
 
