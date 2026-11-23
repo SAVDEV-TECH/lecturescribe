@@ -165,19 +165,35 @@ export default function Home() {
     const noteParam = params.get('note');
     const authParam = params.get('auth');
     const codeParam = params.get('code');
+    const androidAppParam = params.get('androidApp');
+    const sharedAudioParam = params.get('sharedAudio');
+
+    if (androidAppParam === '2') {
+      sessionStorage.setItem('ls_android_app', '2');
+    }
 
     queueMicrotask(() => {
       setTheme(savedTheme);
 
-      if (actionParam === 'record') {
+      if (actionParam === 'record' || sharedAudioParam === '1') {
         setActiveTab('workspace');
-        setRecorderResetSignal(prev => prev + 1);
+        if (actionParam === 'record') {
+          setRecorderResetSignal(prev => prev + 1);
+        }
       }
 
       if (authParam === 'success') {
         showToast('Signed in');
         const cleanUrl = window.location.pathname;
         window.history.replaceState({}, '', cleanUrl);
+      } else if (
+        androidAppParam === '2' &&
+        !actionParam &&
+        !noteParam &&
+        !codeParam &&
+        !sharedAudioParam
+      ) {
+        window.history.replaceState({}, '', window.location.pathname);
       }
 
       // Initial Local Notes

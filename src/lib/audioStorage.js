@@ -150,3 +150,30 @@ export async function clearRecordingCheckpoint() {
     return false;
   }
 }
+
+const SHARED_AUDIO_INBOX_KEY = 'shared_audio_inbox';
+
+/**
+ * Reads an audio recording handed off from the Android native foreground service or Share Target.
+ */
+export async function getSharedAudioInbox() {
+  try {
+    return await runStoreRequest(CHECKPOINT_STORE, 'readonly', (store) =>
+      store.get(SHARED_AUDIO_INBOX_KEY)
+    );
+  } catch (err) {
+    console.warn('IndexedDB getSharedAudioInbox note:', err);
+    return null;
+  }
+}
+
+export async function clearSharedAudioInbox() {
+  try {
+    return await runStoreRequest(CHECKPOINT_STORE, 'readwrite', (store) =>
+      store.delete(SHARED_AUDIO_INBOX_KEY)
+    );
+  } catch (err) {
+    console.warn('IndexedDB clearSharedAudioInbox note:', err);
+    return false;
+  }
+}

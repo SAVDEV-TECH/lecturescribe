@@ -5,13 +5,40 @@ import {
   saveAudioForNote,
   saveRecordingCheckpoint,
   getRecordingCheckpoint,
-  clearRecordingCheckpoint
+  clearRecordingCheckpoint,
+  getSharedAudioInbox,
+  clearSharedAudioInbox
 } from '@/lib/audioStorage';
 import { transcribeAudioWithChunking, polishTranscript, formatTimestamp } from '@/lib/audioUtils';
 import { extractTextFromDocument } from '@/lib/docExtract';
 
-// Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
-const SILENT_AUDIO_DATA = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+/**
+ * Generates a valid 2-second 8 kHz mono silent PCM WAV Blob URL so mobile Chrome
+ * and Safari treat background audio playback as continuous rather than a 1-sample stub.
+ */
+function createSilentWavBlobUrl(durationSeconds = 2, sampleRate = 8000) {
+  const numSamples = durationSeconds * sampleRate;
+  const dataSize = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
 
 const SPEECH_RECOGNITION_LANGS = {
   en: 'en-US',
@@ -71,6 +98,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   // Mobile background & stealth screen-off state
   const [isStealthMode, setIsStealthMode] = useState(false);
   const [keepScreenAwake, setKeepScreenAwake] = useState(false);
+  const [isAndroidAppV2, setIsAndroidAppV2] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
 
   // Audio capture & UI refs
@@ -80,6 +108,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const startTimeRef = useRef(null);
   const accumulatedPausedDurationRef = useRef(0);
   const lastPauseTimestampRef = useRef(null);
+  const isPausedRef = useRef(false);
+  const isImportingInboxRef = useRef(false);
+  const processAudioRef = useRef(null);
   const lastCheckpointCountRef = useRef(0);
   const bookmarksRef = useRef([]);
   const metaRef = useRef({ title: '', subject: 'Computer Science', language: 'en', timerSeconds: 0 });
@@ -89,6 +120,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
   // Background Audio Anchor & Wake Lock
   const silentAudioRef = useRef(null);
+  const silentBlobUrlRef = useRef(null);
   const wakeLockRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
@@ -103,8 +135,19 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     metaRef.current = { title, subject: resolvedSubject, language, timerSeconds };
   }, [title, resolvedSubject, language, timerSeconds]);
 
-  // Check for interrupted unsaved recording checkpoint on mount
+  // Detect upgraded Android APK TWA session & interrupted checkpoints on mount
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('androidApp') === '2') {
+      sessionStorage.setItem('ls_android_app', '2');
+    }
+    if (
+      params.get('androidApp') === '2' ||
+      sessionStorage.getItem('ls_android_app') === '2'
+    ) {
+      queueMicrotask(() => setIsAndroidAppV2(true));
+    }
+
     getRecordingCheckpoint().then((cp) => {
       if (cp?.chunks?.length > 0) {
         setPendingCheckpoint(cp);
@@ -206,6 +249,12 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           silentAudioRef.current = null;
         } catch (e) {}
       }
+      if (silentBlobUrlRef.current) {
+        try {
+          URL.revokeObjectURL(silentBlobUrlRef.current);
+          silentBlobUrlRef.current = null;
+        } catch (e) {}
+      }
       if (wakeLockRef.current) {
         try { wakeLockRef.current.release(); } catch (e) {}
       }
@@ -227,7 +276,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   };
 
   // Shared AI note synthesis helper that surfaces API error details
-  const synthesizeNotes = async (transcriptText, effectiveTitle) => {
+  const synthesizeNotes = async (transcriptText, effectiveTitle, subjectOverride) => {
+    const targetSubject = subjectOverride || resolvedSubject;
     try {
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
@@ -235,7 +285,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         body: JSON.stringify({
           transcript: transcriptText,
           title: effectiveTitle,
-          subject: resolvedSubject
+          subject: targetSubject
         })
       });
 
@@ -261,8 +311,12 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     uploadFileName,
     fallbackText,
     effectiveTitle,
-    capturedBookmarks = []
+    capturedBookmarks = [],
+    options = {}
   ) => {
+    const effectiveSubject = options.subjectOverride || resolvedSubject;
+    const effectiveLanguage = options.languageOverride || language;
+
     setIsProcessing(true);
     const noteId = 'lecture_' + Date.now();
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -270,7 +324,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     // Persist audio locally in IndexedDB for playback and offline resilience
     await saveAudioForNote(noteId, audioBlobOrFile, {
       fileName: uploadFileName,
-      language,
+      language: effectiveLanguage,
       pendingSync: isOffline
     });
 
@@ -285,7 +339,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         const result = await transcribeAudioWithChunking({
           blobOrFile: audioBlobOrFile,
           fileName: uploadFileName,
-          language,
+          language: effectiveLanguage,
           onProgress: (msg) => setStatusMessage(msg)
         });
         rawTranscript = result.text;
@@ -321,8 +375,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         text: finalTranscript,
         segments: transcriptSegments,
         title: effectiveTitle,
-        subject: resolvedSubject,
-        language,
+        subject: effectiveSubject,
+        language: effectiveLanguage,
         onProgress: (msg) => setStatusMessage(msg)
       });
       finalTranscript = polished.cleanedText || finalTranscript;
@@ -335,7 +389,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       finalTranscript = pendingSync
         ? fallbackText || `Saved offline: "${effectiveTitle}". Will sync when online.`
         : fallbackText ||
-          `Recorded "${effectiveTitle}" (${resolvedSubject}). ${transcribeError ? `(${transcribeError})` : ''}`.trim();
+          `Recorded "${effectiveTitle}" (${effectiveSubject}). ${transcribeError ? `(${transcribeError})` : ''}`.trim();
     }
 
     setLiveTranscript(finalTranscript);
@@ -344,7 +398,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     let analysisError = '';
     if (!pendingSync) {
       setStatusMessage('Generating notes...');
-      const result = await synthesizeNotes(finalTranscript, effectiveTitle);
+      const result = await synthesizeNotes(finalTranscript, effectiveTitle, effectiveSubject);
       notesData = result.notesData;
       analysisError = result.error;
     } else {
@@ -359,8 +413,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     const newNote = {
       id: noteId,
       title: effectiveTitle,
-      tag: resolvedSubject,
-      language,
+      tag: effectiveSubject,
+      language: effectiveLanguage,
       hasLocalAudio: true,
       pendingSync,
       segments: transcriptSegments,
@@ -384,6 +438,73 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         : 'Saved'
     );
   };
+
+  useEffect(() => {
+    processAudioRef.current = processAudioAndCompile;
+  });
+
+  // Auto-import finished native Android recordings or shared audio files from SW inbox
+  useEffect(() => {
+    const consumeInbox = async () => {
+      if (isImportingInboxRef.current) return;
+      isImportingInboxRef.current = true;
+      try {
+        const shared = await getSharedAudioInbox();
+        if (!shared?.blob) return;
+
+        await clearSharedAudioInbox();
+        let meta = {};
+        try {
+          meta = shared.meta ? JSON.parse(shared.meta) : {};
+        } catch {}
+
+        if (meta.androidApp === 2) {
+          sessionStorage.setItem('ls_android_app', '2');
+          setIsAndroidAppV2(true);
+        }
+
+        if (window.location.search.includes('sharedAudio=')) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+
+        const effectiveSubject = meta.subject || resolvedSubject;
+        const effectiveLanguage = meta.language || language;
+        const effectiveTitle = shared.title || meta.title || `${effectiveSubject} Lecture`;
+        const parsedBookmarks = Array.isArray(meta.bookmarks) ? meta.bookmarks : [];
+
+        if (processAudioRef.current) {
+          await processAudioRef.current(
+            shared.blob,
+            shared.fileName || 'lecture.m4a',
+            `Recorded "${effectiveTitle}" (${effectiveSubject}).`,
+            effectiveTitle,
+            parsedBookmarks,
+            {
+              subjectOverride: effectiveSubject,
+              languageOverride: effectiveLanguage
+            }
+          );
+        }
+      } catch (err) {
+        console.warn('Shared audio inbox import note:', err);
+      } finally {
+        isImportingInboxRef.current = false;
+      }
+    };
+
+    consumeInbox();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        consumeInbox();
+      }
+    };
+    window.addEventListener('focus', consumeInbox);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', consumeInbox);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [language, resolvedSubject]);
 
   const handleRecoverCheckpoint = async () => {
     if (!pendingCheckpoint?.chunks?.length || isProcessing || isRecording) return;
@@ -431,6 +552,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     }
 
     if (isPaused) {
+      isPausedRef.current = false;
       mediaRecorderRef.current.resume();
       if (silentAudioRef.current) silentAudioRef.current.play().catch(() => {});
       setMediaSessionPlaybackState('playing');
@@ -451,6 +573,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         }
       }, 1000);
     } else {
+      isPausedRef.current = true;
       mediaRecorderRef.current.pause();
       if (silentAudioRef.current) silentAudioRef.current.pause();
       setMediaSessionPlaybackState('paused');
@@ -469,6 +592,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       navigator.vibrate([50, 50, 50]);
     }
 
+    isPausedRef.current = false;
     setIsStealthMode(false);
     stopBackgroundAudioAnchor();
 
@@ -506,11 +630,14 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     mediaRecorderRef.current.stop();
   };
 
-  // Start Background Audio Anchor & MediaSession so mobile OS does not pause recording when screen is off
+  // Start valid multi-second silent Audio + MediaSession synchronously on tap
   const startBackgroundAudioAnchor = () => {
     try {
+      if (!silentBlobUrlRef.current) {
+        silentBlobUrlRef.current = createSilentWavBlobUrl(2, 8000);
+      }
       if (!silentAudioRef.current) {
-        const audio = new Audio(SILENT_AUDIO_DATA);
+        const audio = new Audio(silentBlobUrlRef.current);
         audio.loop = true;
         audio.playsInline = true;
         silentAudioRef.current = audio;
@@ -606,6 +733,26 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         navigator.vibrate([40]);
       }
 
+      if (isAndroidAppV2) {
+        setStatusMessage('Opening background recorder...');
+        if ('serviceWorker' in navigator) {
+          await Promise.race([
+            navigator.serviceWorker.ready.catch(() => {}),
+            new Promise((resolve) => setTimeout(resolve, 1500))
+          ]);
+        }
+        const launchParams = new URLSearchParams({
+          title: title.trim() || `${resolvedSubject} Lecture`,
+          subject: resolvedSubject,
+          language
+        });
+        window.location.href = `lecturescribe://record?${launchParams.toString()}`;
+        return;
+      }
+
+      // Start silent audio keep-alive synchronously on user tap before async mic prompt
+      startBackgroundAudioAnchor();
+
       setStatusMessage('Allow mic access...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -637,6 +784,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       lastCheckpointCountRef.current = 0;
       bookmarksRef.current = [];
       setBookmarks([]);
+      isPausedRef.current = false;
       await clearRecordingCheckpoint();
 
       const recorderOptions = { audioBitsPerSecond: 32000 };
@@ -672,12 +820,27 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         }
       };
 
+      mediaRecorder.onpause = () => {
+        if (!isPausedRef.current && mediaRecorder.state === 'paused') {
+          try {
+            mediaRecorder.resume();
+          } catch {}
+        }
+      };
+
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.onmute = () => {
+          if (!isPausedRef.current) {
+            setStatusMessage('Mic muted by OS — keep Screen Off view open or use Android APK');
+          }
+        };
+      }
+
       mediaRecorderRef.current = mediaRecorder;
-      // Emit chunks every 1000ms so data is never lost if screen turns off
+      // Emit chunks every 1000ms so data is never lost
       mediaRecorder.start(1000);
 
-      // Start background keep-alive anchor
-      startBackgroundAudioAnchor();
       setupAudioMeter(stream);
       initLiveSpeechPreview();
 
@@ -687,7 +850,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       startTimeRef.current = Date.now();
       accumulatedPausedDurationRef.current = 0;
       lastPauseTimestampRef.current = null;
-      setStatusMessage('Recording (safe to lock screen)');
+      setStatusMessage('Recording — keep Screen Off mode open on mobile');
 
       timerIntervalRef.current = setInterval(() => {
         if (startTimeRef.current) {
@@ -699,6 +862,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }, 1000);
     } catch (err) {
       console.error('Audio capture error:', err);
+      stopBackgroundAudioAnchor();
       setStatusMessage('Mic access denied.');
     }
   };
@@ -1405,9 +1569,11 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
             <line x1="12" y1="18" x2="12.01" y2="18"></line>
           </svg>
           <span>
-            {isRecording
-              ? 'Background active — safe to lock screen.'
-              : 'Records even with screen locked.'}
+            {isAndroidAppV2
+              ? 'Native background mic ready — safe to turn screen off.'
+              : isRecording
+                ? 'Use Screen Off blackout mode; phones may mute web mic if locked.'
+                : 'Use Screen Off mode in browser, or APK v2 for screen-off mic.'}
           </span>
         </div>
 
