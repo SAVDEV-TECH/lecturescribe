@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getAudioForNote, saveAudioForNote } from '@/lib/audioStorage';
-import { transcribeAudioWithChunking, formatTimestamp } from '@/lib/audioUtils';
+import { transcribeAudioWithChunking, polishTranscript, formatTimestamp } from '@/lib/audioUtils';
 import { buildMarkdownExport, buildAnkiCsvExport } from '@/lib/noteMeta';
 
 function buildMultipleChoiceQuestion(q, idx, allQuestions = [], allConcepts = []) {
@@ -44,6 +44,8 @@ function buildMultipleChoiceQuestion(q, idx, allQuestions = [], allConcepts = []
 export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleStarNote, onOpenStudy }) {
   const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const [showRawTranscript, setShowRawTranscript] = useState(false);
+  const [isPolishing, setIsPolishing] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [revealAllAnswers, setRevealAllAnswers] = useState(false);
@@ -71,6 +73,8 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
   // Reset state when switching notes
   if (note?.id !== trackedNoteId) {
     setTrackedNoteId(note?.id);
+    setShowRawTranscript(false);
+    setIsPolishing(false);
     setIsEditing(false);
     setIsRecompiling(false);
     setIsSpeaking(false);
@@ -148,7 +152,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     audioPlayerRef.current.play().catch(() => {});
   };
 
-  // Sync an offline-queued audio recording with chunked Whisper + AI Note Synthesizer
+  // Sync an offline-queued audio recording with chunked Whisper + AI Polish + Note Synthesizer
   const handleSyncOfflineAudio = async () => {
     if (!audioRecord?.blob || isSyncingOffline || !onUpdateNote) return;
 
@@ -161,7 +165,24 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         language: audioRecord.language || note.language || 'en'
       });
 
-      const freshTranscript = freshText || transcript;
+      const rawTranscript = String(freshText || transcript || '').trim();
+      let freshTranscript = rawTranscript;
+      let finalSegments = freshSegments;
+
+      if (rawTranscript && !rawTranscript.includes('No speech detected')) {
+        const polished = await polishTranscript({
+          text: rawTranscript,
+          segments: freshSegments,
+          title,
+          subject: tag,
+          language: audioRecord.language || note.language || 'en'
+        });
+        freshTranscript = polished.cleanedText || rawTranscript;
+        if (polished.cleanedSegments.length > 0) {
+          finalSegments = polished.cleanedSegments;
+        }
+      }
+
       let compiledNotes = notes;
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
@@ -191,12 +212,14 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       });
 
       setAudioRecord(prev => (prev ? { ...prev, pendingSync: false } : prev));
+      setEditTranscript(freshTranscript);
 
       onUpdateNote({
         ...note,
         pendingSync: false,
+        rawTranscript: rawTranscript || note.rawTranscript || '',
         transcript: freshTranscript,
-        segments: freshSegments.length > 0 ? freshSegments : (note.segments || []),
+        segments: finalSegments.length > 0 ? finalSegments : (note.segments || []),
         notes: compiledNotes
       });
     } catch (err) {
@@ -300,6 +323,43 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       setActionError(e?.message || 'Network error while analyzing notes.');
     } finally {
       setIsRecompiling(false);
+    }
+  };
+
+  const handlePolishTranscript = async () => {
+    const sourceRaw = String(note?.rawTranscript || transcript || '').trim();
+    if (!sourceRaw || isPolishing || isRecompiling || !onUpdateNote) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setActionError('Connect online to polish transcript.');
+      return;
+    }
+
+    setIsPolishing(true);
+    setActionError('');
+    try {
+      const { cleanedText, cleanedSegments } = await polishTranscript({
+        text: sourceRaw,
+        segments: Array.isArray(note?.segments) ? note.segments : [],
+        title,
+        subject: tag,
+        language: note?.language || 'en'
+      });
+
+      const resolvedText = cleanedText || sourceRaw;
+      const updated = {
+        ...note,
+        rawTranscript: note?.rawTranscript || sourceRaw,
+        transcript: resolvedText,
+        segments: cleanedSegments.length > 0 ? cleanedSegments : (note?.segments || [])
+      };
+      onUpdateNote(updated);
+      setEditTranscript(resolvedText);
+      setShowRawTranscript(false);
+    } catch (err) {
+      console.warn('Polish transcript error:', err);
+      setActionError(err?.message || 'Could not polish transcript.');
+    } finally {
+      setIsPolishing(false);
     }
   };
 
@@ -1160,19 +1220,89 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
 
       {/* Full Transcript Toggle */}
       <section style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
-        <button
-          onClick={() => setShowFullTranscript(!showFullTranscript)}
-          style={{
-            fontSize: '0.8rem',
-            color: 'var(--primary)',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.35rem'
-          }}
-        >
-          {showFullTranscript ? 'Hide Transcript' : 'Show Transcript'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <button
+            onClick={() => setShowFullTranscript(!showFullTranscript)}
+            style={{
+              fontSize: '0.8rem',
+              color: 'var(--primary)',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem'
+            }}
+          >
+            {showFullTranscript ? 'Hide Transcript' : 'Show Transcript'}
+          </button>
+
+          {showFullTranscript && !isEditing && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              {note.rawTranscript && note.rawTranscript !== transcript ? (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    borderRadius: 'var(--radius-full)',
+                    border: '1px solid var(--border-subtle)',
+                    backgroundColor: 'var(--bg-surface)',
+                    padding: '2px',
+                    gap: '2px'
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowRawTranscript(false)}
+                    style={{
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      padding: '0.15rem 0.55rem',
+                      borderRadius: 'var(--radius-full)',
+                      backgroundColor: !showRawTranscript ? 'var(--primary)' : 'transparent',
+                      color: !showRawTranscript ? '#fff' : 'var(--text-secondary)'
+                    }}
+                  >
+                    Clean
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowRawTranscript(true)}
+                    style={{
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      padding: '0.15rem 0.55rem',
+                      borderRadius: 'var(--radius-full)',
+                      backgroundColor: showRawTranscript ? 'var(--primary)' : 'transparent',
+                      color: showRawTranscript ? '#fff' : 'var(--text-secondary)'
+                    }}
+                  >
+                    Raw
+                  </button>
+                </div>
+              ) : (
+                !note.rawTranscript &&
+                transcript &&
+                !note.pendingSync &&
+                onUpdateNote && (
+                  <button
+                    type="button"
+                    onClick={handlePolishTranscript}
+                    disabled={isPolishing || isRecompiling}
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: 'var(--radius-full)',
+                      border: '1px solid var(--border-subtle)',
+                      backgroundColor: 'var(--bg-surface)',
+                      color: 'var(--primary)'
+                    }}
+                  >
+                    {isPolishing ? 'Polishing...' : 'Polish'}
+                  </button>
+                )
+              )}
+            </div>
+          )}
+        </div>
 
         {showFullTranscript && (
           isEditing ? (
@@ -1207,7 +1337,9 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               maxHeight: '280px',
               overflowY: 'auto'
             }}>
-              {Array.isArray(note.segments) && note.segments.length > 0 ? (
+              {showRawTranscript && note.rawTranscript ? (
+                note.rawTranscript
+              ) : Array.isArray(note.segments) && note.segments.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                   {note.segments.map((seg, idx) => (
                     <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>

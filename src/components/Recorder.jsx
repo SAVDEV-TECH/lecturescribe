@@ -7,7 +7,7 @@ import {
   getRecordingCheckpoint,
   clearRecordingCheckpoint
 } from '@/lib/audioStorage';
-import { transcribeAudioWithChunking, formatTimestamp } from '@/lib/audioUtils';
+import { transcribeAudioWithChunking, polishTranscript, formatTimestamp } from '@/lib/audioUtils';
 import { extractTextFromDocument } from '@/lib/docExtract';
 
 // Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
@@ -274,6 +274,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       pendingSync: isOffline
     });
 
+    let rawTranscript = '';
     let finalTranscript = '';
     let transcriptSegments = [];
     let pendingSync = isOffline;
@@ -287,9 +288,13 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           language,
           onProgress: (msg) => setStatusMessage(msg)
         });
+        rawTranscript = result.text;
         finalTranscript = result.text;
         transcriptSegments = result.segments;
         pendingSync = false;
+        if (rawTranscript) {
+          setLiveTranscript(rawTranscript);
+        }
       } catch (err) {
         console.warn('Transcribe note:', err);
         transcribeError = err?.message || 'Transcription error';
@@ -305,6 +310,25 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         language,
         pendingSync: true
       });
+    }
+
+    if (
+      !pendingSync &&
+      finalTranscript.trim().length > 0 &&
+      !finalTranscript.includes('No speech detected')
+    ) {
+      const polished = await polishTranscript({
+        text: finalTranscript,
+        segments: transcriptSegments,
+        title: effectiveTitle,
+        subject: resolvedSubject,
+        language,
+        onProgress: (msg) => setStatusMessage(msg)
+      });
+      finalTranscript = polished.cleanedText || finalTranscript;
+      if (polished.cleanedSegments.length > 0) {
+        transcriptSegments = polished.cleanedSegments;
+      }
     }
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
@@ -343,6 +367,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       bookmarks: capturedBookmarks,
       masteredIndices: [],
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      rawTranscript,
       transcript: finalTranscript,
       notes: notesData
     };

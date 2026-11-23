@@ -12,7 +12,7 @@ import MobileBottomNav from '@/components/MobileBottomNav';
 import { initialSeedNote } from '@/lib/mockData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getAudioForNote, saveAudioForNote, deleteAudioForNote } from '@/lib/audioStorage';
-import { transcribeAudioWithChunking } from '@/lib/audioUtils';
+import { transcribeAudioWithChunking, polishTranscript } from '@/lib/audioUtils';
 import { unpackSupabaseNote, packNotesJsonForSupabase } from '@/lib/noteMeta';
 import { initGoogleOneTap } from '@/lib/googleOneTap';
 
@@ -138,7 +138,8 @@ export default function Home() {
               : (localMatch.segments || []),
             bookmarks: unpacked.bookmarks.length > 0
               ? unpacked.bookmarks
-              : (localMatch.bookmarks || [])
+              : (localMatch.bookmarks || []),
+            rawTranscript: unpacked.rawTranscript || localMatch.rawTranscript || ''
           };
         });
         setNotes(formatted);
@@ -304,7 +305,24 @@ export default function Home() {
               language: audioRecord.language || item.language || 'en'
             });
 
-            const finalTranscript = freshText || item.transcript;
+            const rawTranscript = String(freshText || item.transcript || '').trim();
+            let finalTranscript = rawTranscript;
+            let finalSegments = freshSegments;
+
+            if (rawTranscript && !rawTranscript.includes('No speech detected')) {
+              const polished = await polishTranscript({
+                text: rawTranscript,
+                segments: freshSegments,
+                title: item.title,
+                subject: item.tag,
+                language: audioRecord.language || item.language || 'en'
+              });
+              finalTranscript = polished.cleanedText || rawTranscript;
+              finalSegments = polished.cleanedSegments.length > 0
+                ? polished.cleanedSegments
+                : freshSegments;
+            }
+
             let compiledNotes = item.notes;
             const analyzeRes = await fetch('/api/analyze', {
               method: 'POST',
@@ -328,8 +346,9 @@ export default function Home() {
             const resolvedNote = {
               ...item,
               pendingSync: false,
+              rawTranscript: rawTranscript || item.rawTranscript || '',
               transcript: finalTranscript,
-              segments: freshSegments.length > 0 ? freshSegments : (item.segments || []),
+              segments: finalSegments.length > 0 ? finalSegments : (item.segments || []),
               notes: compiledNotes
             };
 

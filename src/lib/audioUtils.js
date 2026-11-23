@@ -196,3 +196,151 @@ export async function transcribeAudioWithChunking({
     segments: allSegments
   };
 }
+
+const CLEANUP_SEGMENT_BATCH_SIZE = 30;
+const CLEANUP_TEXT_CHUNK_SIZE = 4000;
+
+function splitTextForCleanup(text, maxChars = CLEANUP_TEXT_CHUNK_SIZE) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return [];
+  if (trimmed.length <= maxChars) return [trimmed];
+
+  const chunks = [];
+  let cursor = 0;
+  while (cursor < trimmed.length) {
+    let end = Math.min(cursor + maxChars, trimmed.length);
+    if (end < trimmed.length) {
+      const slice = trimmed.slice(cursor, end);
+      const breakIndex = Math.max(
+        slice.lastIndexOf('\n'),
+        slice.lastIndexOf('. '),
+        slice.lastIndexOf('? '),
+        slice.lastIndexOf('! '),
+        slice.lastIndexOf(' ')
+      );
+      if (breakIndex > Math.floor(maxChars * 0.5)) {
+        end = cursor + breakIndex + 1;
+      }
+    }
+    const piece = trimmed.slice(cursor, end).trim();
+    if (piece) chunks.push(piece);
+    cursor = end;
+  }
+  return chunks;
+}
+
+async function postCleanupRequest(payload) {
+  const res = await fetch('/api/cleanup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error || `Cleanup failed (${res.status}).`);
+  }
+  return data;
+}
+
+/**
+ * Polishes a raw voice transcript (and optional timestamped segments) in safe chunks,
+ * falling back cleanly to original text/segments when offline or on API errors.
+ */
+export async function polishTranscript({
+  text = '',
+  segments = [],
+  title = 'Lecture',
+  subject = 'General',
+  language = 'en',
+  onProgress
+} = {}) {
+  const safeSegments = Array.isArray(segments)
+    ? segments.filter((seg) => seg && String(seg.text || '').trim().length > 0)
+    : [];
+  const rawText =
+    String(text || '').trim() ||
+    safeSegments.map((seg) => String(seg.text || '').trim()).join(' ').trim();
+
+  if (!rawText) {
+    return { cleanedText: '', cleanedSegments: safeSegments };
+  }
+
+  try {
+    if (safeSegments.length > 0) {
+      const totalBatches = Math.ceil(safeSegments.length / CLEANUP_SEGMENT_BATCH_SIZE);
+      const cleanedSegments = [];
+
+      for (let i = 0; i < totalBatches; i++) {
+        onProgress?.(
+          totalBatches > 1
+            ? `Polishing wording (${i + 1}/${totalBatches})...`
+            : 'Polishing wording...'
+        );
+        const batch = safeSegments.slice(
+          i * CLEANUP_SEGMENT_BATCH_SIZE,
+          (i + 1) * CLEANUP_SEGMENT_BATCH_SIZE
+        );
+        try {
+          const data = await postCleanupRequest({
+            segments: batch,
+            title,
+            subject,
+            language
+          });
+          if (Array.isArray(data?.segments)) {
+            cleanedSegments.push(...data.segments);
+          } else {
+            cleanedSegments.push(...batch);
+          }
+        } catch {
+          cleanedSegments.push(...batch);
+        }
+      }
+
+      const cleanedText = cleanedSegments
+        .map((seg) => String(seg.text || '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+
+      return {
+        cleanedText: cleanedText || rawText,
+        cleanedSegments: cleanedSegments.length > 0 || !rawText ? cleanedSegments : safeSegments
+      };
+    }
+
+    const chunks = splitTextForCleanup(rawText);
+    const cleanedParts = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      onProgress?.(
+        chunks.length > 1
+          ? `Polishing wording (${i + 1}/${chunks.length})...`
+          : 'Polishing wording...'
+      );
+      try {
+        const data = await postCleanupRequest({
+          text: chunks[i],
+          segments: [],
+          title,
+          subject,
+          language
+        });
+        cleanedParts.push(String(data?.cleanedText || chunks[i]).trim());
+      } catch {
+        cleanedParts.push(chunks[i]);
+      }
+    }
+
+    const cleanedText = cleanedParts.filter(Boolean).join(' ').trim();
+    return {
+      cleanedText: cleanedText || rawText,
+      cleanedSegments: safeSegments
+    };
+  } catch {
+    return {
+      cleanedText: rawText,
+      cleanedSegments: safeSegments
+    };
+  }
+}

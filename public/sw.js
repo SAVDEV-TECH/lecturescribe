@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lecturescribe-pwa-v3';
+const CACHE_NAME = 'lecturescribe-pwa-v4';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

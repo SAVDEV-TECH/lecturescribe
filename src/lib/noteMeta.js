@@ -18,6 +18,7 @@ export function unpackSupabaseNote(row) {
     bookmarks: Array.isArray(meta.bookmarks) ? meta.bookmarks : [],
     masteredIndices: Array.isArray(meta.masteredIndices) ? meta.masteredIndices : [],
     language: meta.language || 'en',
+    rawTranscript: meta.rawTranscript || '',
     timestamp: new Date(row.created_at).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -38,7 +39,8 @@ export function packNotesJsonForSupabase(note) {
     segments: Array.isArray(note.segments) ? note.segments : [],
     bookmarks: Array.isArray(note.bookmarks) ? note.bookmarks : [],
     masteredIndices: Array.isArray(note.masteredIndices) ? note.masteredIndices : [],
-    language: note.language || 'en'
+    language: note.language || 'en',
+    rawTranscript: note.rawTranscript || ''
   };
   return baseNotes;
 }
