@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { saveAudioForNote } from '@/lib/audioStorage';
+import {
+  saveAudioForNote,
+  saveRecordingCheckpoint,
+  getRecordingCheckpoint,
+  clearRecordingCheckpoint
+} from '@/lib/audioStorage';
+import { transcribeAudioWithChunking, formatTimestamp } from '@/lib/audioUtils';
+import { extractTextFromDocument } from '@/lib/docExtract';
 
 // Tiny 1-second silent WAV base64 loop to keep mobile audio pipeline alive with screen off
 const SILENT_AUDIO_DATA = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
@@ -56,6 +63,8 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const [isProcessing, setIsProcessing] = useState(false);
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pastedText, setPastedText] = useState('');
+  const [bookmarks, setBookmarks] = useState([]);
+  const [pendingCheckpoint, setPendingCheckpoint] = useState(null);
 
   const resolvedSubject = subject === '__custom__' ? (customSubject.trim() || 'Custom Course') : subject;
 
@@ -71,8 +80,12 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const startTimeRef = useRef(null);
   const accumulatedPausedDurationRef = useRef(0);
   const lastPauseTimestampRef = useRef(null);
+  const lastCheckpointCountRef = useRef(0);
+  const bookmarksRef = useRef([]);
+  const metaRef = useRef({ title: '', subject: 'Computer Science', language: 'en', timerSeconds: 0 });
   const titleInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const docInputRef = useRef(null);
 
   // Background Audio Anchor & Wake Lock
   const silentAudioRef = useRef(null);
@@ -85,6 +98,20 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   const speechRecognitionRef = useRef(null);
   const accumulatedWebSpeechRef = useRef('');
 
+  // Keep latest metadata mirrored in ref for async/checkpoint handlers
+  useEffect(() => {
+    metaRef.current = { title, subject: resolvedSubject, language, timerSeconds };
+  }, [title, resolvedSubject, language, timerSeconds]);
+
+  // Check for interrupted unsaved recording checkpoint on mount
+  useEffect(() => {
+    getRecordingCheckpoint().then((cp) => {
+      if (cp?.chunks?.length > 0) {
+        setPendingCheckpoint(cp);
+      }
+    });
+  }, []);
+
   // Reset form state when New Lecture is triggered
   if (resetSignal !== trackedResetSignal) {
     setTrackedResetSignal(resetSignal);
@@ -93,6 +120,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       setLiveTranscript('');
       setStatusMessage('');
       setTimerSeconds(0);
+      setBookmarks([]);
       setShowPasteBox(false);
       setPastedText('');
     }
@@ -102,6 +130,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   useEffect(() => {
     if (resetSignal > 0 && !isRecording && !isProcessing) {
       accumulatedWebSpeechRef.current = '';
+      bookmarksRef.current = [];
       if (titleInputRef.current) {
         titleInputRef.current.focus();
       }
@@ -127,10 +156,24 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     handleWakeLock();
   }, [isRecording, keepScreenAwake]);
 
-  // Recalculate true elapsed time on visibility change (e.g. phone screen turned back on)
+  // Recalculate true elapsed time & flush checkpoint when tab hides or resumes
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (isRecording && !isPaused && startTimeRef.current) {
+      if (!isRecording) return;
+
+      if (document.visibilityState === 'hidden' && audioChunksRef.current.length > 0) {
+        saveRecordingCheckpoint({
+          chunks: [...audioChunksRef.current],
+          mimeType: mediaRecorderRef.current?.mimeType || 'audio/webm',
+          title: metaRef.current.title,
+          subject: metaRef.current.subject,
+          language: metaRef.current.language,
+          timerSeconds: metaRef.current.timerSeconds,
+          bookmarks: bookmarksRef.current
+        });
+      }
+
+      if (!isPaused && startTimeRef.current) {
         const trueElapsed = Math.floor(
           (Date.now() - startTimeRef.current - accumulatedPausedDurationRef.current) / 1000
         );
@@ -172,11 +215,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     };
   }, []);
 
-  const formatTime = (totalSecs) => {
-    const mins = Math.floor(totalSecs / 60);
-    const secs = totalSecs % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const formatTime = (totalSecs) => formatTimestamp(totalSecs);
 
   const stopBackgroundAudioAnchor = () => {
     if (silentAudioRef.current) {
@@ -216,8 +255,14 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     }
   };
 
-  // Shared transcription + AI note synthesis pipeline (with IndexedDB audio playback & offline queue)
-  const processAudioAndCompile = async (audioBlobOrFile, uploadFileName, fallbackText, effectiveTitle) => {
+  // Shared chunked transcription + AI note synthesis pipeline (with IndexedDB playback & offline queue)
+  const processAudioAndCompile = async (
+    audioBlobOrFile,
+    uploadFileName,
+    fallbackText,
+    effectiveTitle,
+    capturedBookmarks = []
+  ) => {
     setIsProcessing(true);
     const noteId = 'lecture_' + Date.now();
     const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -230,31 +275,27 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     });
 
     let finalTranscript = '';
+    let transcriptSegments = [];
     let pendingSync = isOffline;
+    let transcribeError = '';
 
     if (!isOffline) {
-      setStatusMessage('Transcribing...');
       try {
-        const formData = new FormData();
-        formData.append('file', audioBlobOrFile, uploadFileName);
-        formData.append('language', language);
-
-        const transcribeRes = await fetch('/api/transcribe', {
-          method: 'POST',
-          body: formData
+        const result = await transcribeAudioWithChunking({
+          blobOrFile: audioBlobOrFile,
+          fileName: uploadFileName,
+          language,
+          onProgress: (msg) => setStatusMessage(msg)
         });
-
-        if (transcribeRes.ok) {
-          const data = await transcribeRes.json();
-          finalTranscript = data.text;
-          pendingSync = false;
-        } else {
-          const errData = await transcribeRes.json();
-          console.warn('Transcribe note:', errData.error);
-        }
+        finalTranscript = result.text;
+        transcriptSegments = result.segments;
+        pendingSync = false;
       } catch (err) {
-        console.warn('Transcribe network error (queued for offline sync):', err);
-        pendingSync = true;
+        console.warn('Transcribe note:', err);
+        transcribeError = err?.message || 'Transcription error';
+        if (!err?.status || err.status >= 502) {
+          pendingSync = true;
+        }
       }
     }
 
@@ -268,9 +309,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
     if (!finalTranscript || finalTranscript.trim().length === 0) {
       finalTranscript = pendingSync
-        ? fallbackText || `Saved offline: "${effectiveTitle}". Connect online and tap Sync Audio.`
+        ? fallbackText || `Saved offline: "${effectiveTitle}". Will sync when online.`
         : fallbackText ||
-          `Recorded "${effectiveTitle}" (${resolvedSubject}). Add GROQ_API_KEY in .env.local for transcription.`;
+          `Recorded "${effectiveTitle}" (${resolvedSubject}). ${transcribeError ? `(${transcribeError})` : ''}`.trim();
     }
 
     setLiveTranscript(finalTranscript);
@@ -284,7 +325,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       analysisError = result.error;
     } else {
       notesData = {
-        summary: 'Saved offline. Connect online and tap Sync Audio to transcribe.',
+        summary: 'Saved offline. Syncs automatically when online.',
         keyConcepts: [],
         outline: [],
         quizQuestions: []
@@ -298,6 +339,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       language,
       hasLocalAudio: true,
       pendingSync,
+      segments: transcriptSegments,
+      bookmarks: capturedBookmarks,
+      masteredIndices: [],
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       transcript: finalTranscript,
       notes: notesData
@@ -305,13 +349,53 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
 
     onSaveNote(newNote);
     setIsProcessing(false);
+    setBookmarks([]);
+    bookmarksRef.current = [];
     setStatusMessage(
       pendingSync
-        ? 'Saved offline — sync when online'
+        ? 'Saved offline — will sync when online'
         : analysisError
         ? `Saved (analysis error: ${analysisError})`
         : 'Saved'
     );
+  };
+
+  const handleRecoverCheckpoint = async () => {
+    if (!pendingCheckpoint?.chunks?.length || isProcessing || isRecording) return;
+    const cp = pendingCheckpoint;
+    setPendingCheckpoint(null);
+    await clearRecordingCheckpoint();
+
+    if (cp.title) setTitle(cp.title);
+    if (cp.language) setLanguage(cp.language);
+
+    const mimeType = cp.mimeType || 'audio/webm';
+    const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(cp.chunks, { type: mimeType });
+    const recoveredTitle = (cp.title || '').trim() || `Recovered Lecture (${formatTimestamp(cp.timerSeconds)})`;
+    await processAudioAndCompile(
+      blob,
+      `recovered.${fileExt}`,
+      `Recovered recording (${formatTimestamp(cp.timerSeconds)}).`,
+      recoveredTitle,
+      cp.bookmarks || []
+    );
+  };
+
+  const handleDiscardCheckpoint = async () => {
+    setPendingCheckpoint(null);
+    await clearRecordingCheckpoint();
+  };
+
+  const handleAddBookmark = () => {
+    if (!isRecording) return;
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([20]);
+    }
+    const next = [...bookmarksRef.current, { timeSeconds: timerSeconds, label: 'Marked' }];
+    bookmarksRef.current = next;
+    setBookmarks(next);
+    setStatusMessage(`Marked ${formatTimestamp(timerSeconds)}`);
   };
 
   const togglePause = () => {
@@ -372,6 +456,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     mediaRecorderRef.current.onstop = async () => {
       setIsRecording(false);
       setIsPaused(false);
+      await clearRecordingCheckpoint();
 
       const mimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
       const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
@@ -384,7 +469,13 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         accumulatedWebSpeechRef.current ||
         'No speech detected.';
 
-      await processAudioAndCompile(audioBlob, `lecture.${fileExt}`, fallbackText, effectiveTitle);
+      await processAudioAndCompile(
+        audioBlob,
+        `lecture.${fileExt}`,
+        fallbackText,
+        effectiveTitle,
+        bookmarksRef.current
+      );
     };
 
     mediaRecorderRef.current.stop();
@@ -518,6 +609,11 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       }
 
       audioChunksRef.current = [];
+      lastCheckpointCountRef.current = 0;
+      bookmarksRef.current = [];
+      setBookmarks([]);
+      await clearRecordingCheckpoint();
+
       const recorderOptions = { audioBitsPerSecond: 32000 };
       if (selectedMimeType) {
         recorderOptions.mimeType = selectedMimeType;
@@ -535,6 +631,19 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
+          // Checkpoint chunks every 15 seconds so long classes survive browser restarts
+          if (audioChunksRef.current.length - lastCheckpointCountRef.current >= 15) {
+            lastCheckpointCountRef.current = audioChunksRef.current.length;
+            saveRecordingCheckpoint({
+              chunks: [...audioChunksRef.current],
+              mimeType: mediaRecorder.mimeType || 'audio/webm',
+              title: metaRef.current.title,
+              subject: metaRef.current.subject,
+              language: metaRef.current.language,
+              timerSeconds: metaRef.current.timerSeconds,
+              bookmarks: bookmarksRef.current
+            });
+          }
         }
       };
 
@@ -576,13 +685,6 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     // Reset input value so the same file can be selected again if needed
     event.target.value = '';
 
-    // Groq Whisper API max file size is 25 MB
-    const maxBytes = 25 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      setStatusMessage('File exceeds 25 MB. Use MP3 or M4A.');
-      return;
-    }
-
     const derivedTitle = file.name
       .replace(/\.[^/.]+$/, '')
       .replace(/[_-]+/g, ' ')
@@ -601,6 +703,29 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     );
   };
 
+  const handleDocumentImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    setStatusMessage('Reading file...');
+    try {
+      const extracted = await extractTextFromDocument(file);
+      const derivedTitle = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[_-]+/g, ' ')
+        .trim();
+      if (!title.trim() && derivedTitle) {
+        setTitle(derivedTitle);
+      }
+      setPastedText((prev) => (prev.trim() ? `${prev.trim()}\n\n${extracted}` : extracted));
+      setShowPasteBox(true);
+      setStatusMessage(`Loaded ${file.name}`);
+    } catch (err) {
+      setStatusMessage(err?.message || 'Could not read document.');
+    }
+  };
+
   const handleCompilePastedText = async () => {
     const cleanText = pastedText.trim();
     if (!cleanText || isProcessing) return;
@@ -616,6 +741,9 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       id: 'lecture_' + Date.now(),
       title: effectiveTitle,
       tag: resolvedSubject,
+      masteredIndices: [],
+      bookmarks: [],
+      segments: [],
       timestamp: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       transcript: cleanText,
       notes: notesData
@@ -639,6 +767,53 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
       gap: '1.25rem',
       position: 'relative'
     }}>
+      {pendingCheckpoint && !isRecording && !isProcessing && (
+        <div style={{
+          padding: '0.75rem 1rem',
+          borderRadius: 'var(--radius-sm)',
+          backgroundColor: 'rgba(245, 158, 11, 0.12)',
+          border: '1px solid var(--warning)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '0.6rem'
+        }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-main)' }}>
+            Unsaved recording ({formatTime(pendingCheckpoint.timerSeconds)})
+          </span>
+          <div style={{ display: 'flex', gap: '0.45rem' }}>
+            <button
+              type="button"
+              onClick={handleRecoverCheckpoint}
+              style={{
+                padding: '0.38rem 0.8rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--warning)',
+                color: '#0f172a',
+                fontSize: '0.76rem',
+                fontWeight: 700
+              }}
+            >
+              Recover
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscardCheckpoint}
+              style={{
+                padding: '0.38rem 0.7rem',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-secondary)',
+                fontSize: '0.76rem'
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
       {/* OLED / AMOLED Stealth Blackout Mode (Pure #000000 for 0% display battery use on phones) */}
       {isStealthMode && isRecording && (
         <div
@@ -926,13 +1101,20 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
             onChange={handleFileUpload}
             style={{ display: 'none' }}
           />
+          <input
+            ref={docInputRef}
+            type="file"
+            accept=".pdf,.docx,.pptx,.txt,.md,.csv"
+            onChange={handleDocumentImport}
+            style={{ display: 'none' }}
+          />
           {!isRecording ? (
             <>
               <button
                 type="button"
                 onClick={() => setShowPasteBox(!showPasteBox)}
                 disabled={isProcessing}
-                title="Paste lecture notes or text"
+                title="Paste text or import PDF, Word, or PowerPoint"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -954,7 +1136,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
                   <line x1="16" y1="13" x2="8" y2="13"></line>
                   <line x1="16" y1="17" x2="8" y2="17"></line>
                 </svg>
-                <span>Paste</span>
+                <span>Text / PDF</span>
               </button>
 
               <button
@@ -1012,6 +1194,27 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
             </>
           ) : (
             <>
+              <button
+                type="button"
+                onClick={handleAddBookmark}
+                title="Bookmark current timestamp"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.35rem',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: bookmarks.length > 0 ? 'rgba(245, 158, 11, 0.15)' : 'var(--bg-surface)',
+                  border: `1px solid ${bookmarks.length > 0 ? 'var(--warning)' : 'var(--border-subtle)'}`,
+                  color: bookmarks.length > 0 ? 'var(--warning)' : 'var(--text-main)',
+                  fontWeight: 600,
+                  fontSize: '0.8rem'
+                }}
+              >
+                <span>{bookmarks.length > 0 ? `Mark (${bookmarks.length})` : 'Mark'}</span>
+              </button>
+
               {/* Screen Off / Stealth button for mobile battery saving */}
               <button
                 onClick={() => setIsStealthMode(true)}
@@ -1088,22 +1291,40 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
           flexDirection: 'column',
           gap: '0.75rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Paste Text or Notes
+              Paste Text or Import File
             </span>
-            <button
-              type="button"
-              onClick={() => setShowPasteBox(false)}
-              style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
-            >
-              Close
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <button
+                type="button"
+                onClick={() => docInputRef.current?.click()}
+                disabled={isProcessing}
+                style={{
+                  padding: '0.32rem 0.7rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--primary)',
+                  fontSize: '0.75rem',
+                  fontWeight: 600
+                }}
+              >
+                Import PDF / DOCX / PPTX
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPasteBox(false)}
+                style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
+              >
+                Close
+              </button>
+            </div>
           </div>
           <textarea
             value={pastedText}
             onChange={(e) => setPastedText(e.target.value)}
-            placeholder="Paste notes, transcript, or slides..."
+            placeholder="Paste notes, slides, or import PDF / DOCX / PPTX above..."
             rows={5}
             style={{
               width: '100%',

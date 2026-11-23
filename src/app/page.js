@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import Recorder from '@/components/Recorder';
@@ -12,7 +12,23 @@ import MobileBottomNav from '@/components/MobileBottomNav';
 import { initialSeedNote } from '@/lib/mockData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getAudioForNote, saveAudioForNote, deleteAudioForNote } from '@/lib/audioStorage';
+import { transcribeAudioWithChunking } from '@/lib/audioUtils';
+import { unpackSupabaseNote, packNotesJsonForSupabase } from '@/lib/noteMeta';
 import { initGoogleOneTap } from '@/lib/googleOneTap';
+
+async function migrateAudioKey(oldId, newId) {
+  if (!oldId || !newId || String(oldId) === String(newId)) return;
+  const existingAudio = await getAudioForNote(oldId);
+  if (existingAudio?.blob) {
+    await saveAudioForNote(newId, existingAudio.blob, {
+      mimeType: existingAudio.mimeType,
+      fileName: existingAudio.fileName,
+      pendingSync: existingAudio.pendingSync,
+      language: existingAudio.language
+    });
+    await deleteAudioForNote(oldId);
+  }
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('workspace');
@@ -25,6 +41,18 @@ export default function Home() {
   const [recorderResetSignal, setRecorderResetSignal] = useState(0);
   const [toastMessage, setToastMessage] = useState('');
 
+  const notesRef = useRef([initialSeedNote]);
+  const userRef = useRef(null);
+  const isSyncingOfflineRef = useRef(false);
+
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -32,33 +60,89 @@ export default function Home() {
     }, 2800);
   };
 
-  // Sync notes from Supabase
-  const loadSupabaseNotes = async (requestedNoteId) => {
+  // Merge guest localStorage notes up to Supabase, then load remote notes
+  const loadSupabaseNotes = async (requestedNoteId, currentUser) => {
     try {
+      const uid = currentUser?.id;
+      if (uid) {
+        let localNotes = [];
+        try {
+          localNotes = JSON.parse(localStorage.getItem('ls_notes') || '[]');
+        } catch (e) {}
+
+        const guestNotes = localNotes.filter(
+          (n) => String(n.id).startsWith('lecture_')
+        );
+
+        if (guestNotes.length > 0) {
+          let mergedAny = false;
+          const remainingLocal = [...localNotes];
+          for (const gNote of guestNotes) {
+            try {
+              const { data: inserted, error: insertErr } = await supabase
+                .from('notes')
+                .insert({
+                  user_id: uid,
+                  title: gNote.title,
+                  tag: gNote.tag,
+                  transcript: gNote.transcript,
+                  notes_json: packNotesJsonForSupabase(gNote)
+                })
+                .select()
+                .single();
+
+              if (!insertErr && inserted?.id) {
+                await migrateAudioKey(gNote.id, inserted.id);
+                const idx = remainingLocal.findIndex((item) => String(item.id) === String(gNote.id));
+                if (idx !== -1) {
+                  remainingLocal[idx] = { ...gNote, id: inserted.id };
+                }
+                mergedAny = true;
+              }
+            } catch (err) {
+              console.warn('Guest note migration note:', err);
+            }
+          }
+          if (mergedAny) {
+            localStorage.setItem('ls_notes', JSON.stringify(remainingLocal));
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from('notes')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (!error && data && data.length > 0) {
-        let starredSet = new Set();
+        let localMetaMap = {};
         try {
           const savedLocal = JSON.parse(localStorage.getItem('ls_notes') || '[]');
-          savedLocal.forEach(item => {
-            if (item.starred) starredSet.add(String(item.id));
+          savedLocal.forEach((item) => {
+            localMetaMap[String(item.id)] = item;
           });
         } catch (e) {}
 
-        const formatted = data.map(n => ({
-          id: n.id,
-          title: n.title,
-          tag: n.tag,
-          starred: starredSet.has(String(n.id)),
-          timestamp: new Date(n.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-          transcript: n.transcript,
-          notes: n.notes_json
-        }));
+        const formatted = data.map((row) => {
+          const unpacked = unpackSupabaseNote(row);
+          const localMatch = localMetaMap[String(row.id)];
+          if (!localMatch) return unpacked;
+          return {
+            ...unpacked,
+            starred: unpacked.starred || Boolean(localMatch.starred),
+            masteredIndices: unpacked.masteredIndices.length > 0
+              ? unpacked.masteredIndices
+              : (localMatch.masteredIndices || []),
+            segments: unpacked.segments.length > 0
+              ? unpacked.segments
+              : (localMatch.segments || []),
+            bookmarks: unpacked.bookmarks.length > 0
+              ? unpacked.bookmarks
+              : (localMatch.bookmarks || [])
+          };
+        });
         setNotes(formatted);
+        localStorage.setItem('ls_notes', JSON.stringify(formatted));
         const target = requestedNoteId && formatted.some(n => String(n.id) === String(requestedNoteId))
           ? requestedNoteId
           : formatted[0].id;
@@ -117,9 +201,9 @@ export default function Home() {
         onSuccess: (authenticatedUser) => {
           setUser(authenticatedUser);
           if (isSupabaseConfigured()) {
-            loadSupabaseNotes(noteParam);
+            loadSupabaseNotes(noteParam, authenticatedUser);
           }
-          showToast('Signed in with Google One Tap');
+          showToast('Signed in');
         },
       });
     };
@@ -130,8 +214,8 @@ export default function Home() {
         supabase.auth.exchangeCodeForSession(codeParam).then(({ data }) => {
           if (data?.session?.user) {
             setUser(data.session.user);
-            loadSupabaseNotes(noteParam);
-            showToast('Signed in with Google');
+            loadSupabaseNotes(noteParam, data.session.user);
+            showToast('Signed in');
             window.history.replaceState({}, '', window.location.pathname);
           }
         }).catch(() => {});
@@ -140,7 +224,7 @@ export default function Home() {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
           setUser(session.user);
-          loadSupabaseNotes(noteParam);
+          loadSupabaseNotes(noteParam, session.user);
         } else {
           const cachedGoogleUser = localStorage.getItem('ls_google_user');
           if (cachedGoogleUser) {
@@ -158,7 +242,7 @@ export default function Home() {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
           setUser(session.user);
-          loadSupabaseNotes(noteParam);
+          loadSupabaseNotes(noteParam, session.user);
         } else if (event === 'SIGNED_OUT') {
           setUser(null);
         }
@@ -179,6 +263,101 @@ export default function Home() {
         triggerOneTapIfLoggedOut();
       }
     }
+  }, []);
+
+  const persistNoteUpdateToSupabase = async (updatedNote) => {
+    if (!isSupabaseConfigured() || !userRef.current) return;
+    try {
+      await supabase
+        .from('notes')
+        .update({
+          title: updatedNote.title,
+          tag: updatedNote.tag,
+          transcript: updatedNote.transcript,
+          notes_json: packNotesJsonForSupabase(updatedNote)
+        })
+        .eq('id', updatedNote.id);
+    } catch (e) {
+      console.warn('Failed to update note in Supabase:', e);
+    }
+  };
+
+  // Auto-sync any offline-queued audio recordings once connection is online
+  useEffect(() => {
+    const syncOfflineNotes = async () => {
+      if (isSyncingOfflineRef.current || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+      const queued = notesRef.current.filter((n) => n.pendingSync);
+      if (queued.length === 0) return;
+
+      isSyncingOfflineRef.current = true;
+      let syncedCount = 0;
+
+      try {
+        for (const item of queued) {
+          const audioRecord = await getAudioForNote(item.id);
+          if (!audioRecord?.blob) continue;
+
+          try {
+            const { text: freshText, segments: freshSegments } = await transcribeAudioWithChunking({
+              blobOrFile: audioRecord.blob,
+              fileName: audioRecord.fileName || 'lecture.webm',
+              language: audioRecord.language || item.language || 'en'
+            });
+
+            const finalTranscript = freshText || item.transcript;
+            let compiledNotes = item.notes;
+            const analyzeRes = await fetch('/api/analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transcript: finalTranscript,
+                title: item.title,
+                subject: item.tag
+              })
+            });
+            if (analyzeRes.ok) {
+              compiledNotes = await analyzeRes.json();
+            }
+
+            await saveAudioForNote(item.id, audioRecord.blob, {
+              fileName: audioRecord.fileName,
+              language: audioRecord.language,
+              pendingSync: false
+            });
+
+            const resolvedNote = {
+              ...item,
+              pendingSync: false,
+              transcript: finalTranscript,
+              segments: freshSegments.length > 0 ? freshSegments : (item.segments || []),
+              notes: compiledNotes
+            };
+
+            setNotes((prev) => {
+              const next = prev.map((n) => (String(n.id) === String(item.id) ? resolvedNote : n));
+              localStorage.setItem('ls_notes', JSON.stringify(next));
+              return next;
+            });
+            await persistNoteUpdateToSupabase(resolvedNote);
+            syncedCount++;
+          } catch (err) {
+            console.warn('Auto offline sync error for note', item.id, err);
+          }
+        }
+        if (syncedCount > 0) {
+          showToast('Synced offline audio');
+        }
+      } finally {
+        isSyncingOfflineRef.current = false;
+      }
+    };
+
+    window.addEventListener('online', syncOfflineNotes);
+    const timer = setTimeout(syncOfflineNotes, 1500);
+    return () => {
+      window.removeEventListener('online', syncOfflineNotes);
+      clearTimeout(timer);
+    };
   }, []);
 
   // Toggle Theme
@@ -203,25 +382,13 @@ export default function Home() {
             title: newNote.title,
             tag: newNote.tag,
             transcript: newNote.transcript,
-            notes_json: newNote.notes
+            notes_json: packNotesJsonForSupabase(newNote)
           })
           .select()
           .single();
 
         if (!error && data?.id) {
-          if (String(data.id) !== String(newNote.id)) {
-            const existingAudio = await getAudioForNote(newNote.id);
-            if (existingAudio?.blob) {
-              await saveAudioForNote(data.id, existingAudio.blob, {
-                mimeType: existingAudio.mimeType,
-                pendingSync: existingAudio.pendingSync,
-                dialect: existingAudio.dialect,
-                subject: existingAudio.subject,
-                title: existingAudio.title
-              });
-              await deleteAudioForNote(newNote.id);
-            }
-          }
+          await migrateAudioKey(newNote.id, data.id);
           savedNote = { ...newNote, id: data.id };
         }
       } catch (e) {
@@ -240,43 +407,33 @@ export default function Home() {
     );
   };
 
-  // Handle Update Note (Edit Title, Tag, Summary, Transcript)
-  const handleUpdateNote = async (updatedNote) => {
+  // Handle Update Note (Title, Tag, Summary, Transcript, Segments, Mastery)
+  const handleUpdateNote = async (updatedNote, { silent = false } = {}) => {
     const updatedNotes = notes.map(n => (n.id === updatedNote.id ? updatedNote : n));
     setNotes(updatedNotes);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
-    showToast('Notes saved');
-
-    if (isSupabaseConfigured() && user) {
-      try {
-        await supabase
-          .from('notes')
-          .update({
-            title: updatedNote.title,
-            tag: updatedNote.tag,
-            transcript: updatedNote.transcript,
-            notes_json: updatedNote.notes
-          })
-          .eq('id', updatedNote.id);
-      } catch (e) {
-        console.warn('Failed to update note in Supabase:', e);
-      }
+    if (!silent) {
+      showToast('Notes saved');
     }
+    await persistNoteUpdateToSupabase(updatedNote);
   };
 
   // Toggle Star / Pin on Note
-  const handleToggleStarNote = (noteId) => {
-    let becameStarred = false;
+  const handleToggleStarNote = async (noteId) => {
+    let updatedTarget = null;
     const updatedNotes = notes.map(n => {
       if (n.id === noteId) {
-        becameStarred = !n.starred;
-        return { ...n, starred: becameStarred };
+        updatedTarget = { ...n, starred: !n.starred };
+        return updatedTarget;
       }
       return n;
     });
     setNotes(updatedNotes);
     localStorage.setItem('ls_notes', JSON.stringify(updatedNotes));
-    showToast(becameStarred ? 'Pinned' : 'Unpinned');
+    if (updatedTarget) {
+      showToast(updatedTarget.starred ? 'Pinned' : 'Unpinned');
+      await persistNoteUpdateToSupabase(updatedTarget);
+    }
   };
 
   // Handle Delete Note
@@ -453,7 +610,11 @@ export default function Home() {
           )}
 
           {activeTab === 'study' && (
-            <StudyDeck note={activeNote} />
+            <StudyDeck
+              note={activeNote}
+              allNotes={notes}
+              onUpdateNote={handleUpdateNote}
+            />
           )}
 
           {activeTab === 'roadmap' && (
@@ -477,6 +638,9 @@ export default function Home() {
         onLogout={handleLogout}
         onAuthSuccess={(u) => {
           setUser(u);
+          if (isSupabaseConfigured()) {
+            loadSupabaseNotes(null, u);
+          }
           showToast('Signed in');
         }}
       />

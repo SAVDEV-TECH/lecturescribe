@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getAudioForNote, saveAudioForNote } from '@/lib/audioStorage';
+import { transcribeAudioWithChunking, formatTimestamp } from '@/lib/audioUtils';
+import { buildMarkdownExport, buildAnkiCsvExport } from '@/lib/noteMeta';
 
 function buildMultipleChoiceQuestion(q, idx, allQuestions = [], allConcepts = []) {
   if (Array.isArray(q.options) && q.options.length >= 2 && typeof q.correctIndex === 'number') {
@@ -140,28 +142,26 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     }
   };
 
-  // Sync an offline-queued audio recording with Groq Whisper + AI Note Synthesizer
+  const seekAudioTo = (seconds) => {
+    if (!audioPlayerRef.current) return;
+    audioPlayerRef.current.currentTime = Math.max(0, Number(seconds) || 0);
+    audioPlayerRef.current.play().catch(() => {});
+  };
+
+  // Sync an offline-queued audio recording with chunked Whisper + AI Note Synthesizer
   const handleSyncOfflineAudio = async () => {
     if (!audioRecord?.blob || isSyncingOffline || !onUpdateNote) return;
 
     setIsSyncingOffline(true);
+    setActionError('');
     try {
-      const formData = new FormData();
-      formData.append('file', audioRecord.blob, audioRecord.fileName || 'lecture.webm');
-      formData.append('language', audioRecord.language || note.language || 'en');
-
-      const transcribeRes = await fetch('/api/transcribe', {
-        method: 'POST',
-        body: formData
+      const { text: freshText, segments: freshSegments } = await transcribeAudioWithChunking({
+        blobOrFile: audioRecord.blob,
+        fileName: audioRecord.fileName || 'lecture.webm',
+        language: audioRecord.language || note.language || 'en'
       });
 
-      if (!transcribeRes.ok) {
-        throw new Error('Transcription request failed');
-      }
-
-      const transcribeData = await transcribeRes.json();
-      const freshTranscript = transcribeData.text || transcript;
-
+      const freshTranscript = freshText || transcript;
       let compiledNotes = notes;
       const analyzeRes = await fetch('/api/analyze', {
         method: 'POST',
@@ -175,6 +175,13 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
 
       if (analyzeRes.ok) {
         compiledNotes = await analyzeRes.json();
+      } else {
+        let msg = `Analysis failed (${analyzeRes.status}).`;
+        try {
+          const errData = await analyzeRes.json();
+          if (errData?.error) msg = errData.error;
+        } catch {}
+        setActionError(msg);
       }
 
       await saveAudioForNote(note.id, audioRecord.blob, {
@@ -189,10 +196,12 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         ...note,
         pendingSync: false,
         transcript: freshTranscript,
+        segments: freshSegments.length > 0 ? freshSegments : (note.segments || []),
         notes: compiledNotes
       });
     } catch (err) {
       console.warn('Offline audio sync error:', err);
+      setActionError(err?.message || 'Sync failed.');
     } finally {
       setIsSyncingOffline(false);
     }
@@ -294,6 +303,16 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     }
   };
 
+  const downloadFile = (content, mimeType, extension) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(title || 'lecture').replace(/[^a-z0-9]/gi, '_')}.${extension}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportToWord = () => {
     const conceptsHtml = (notes?.keyConcepts || []).map(c => `<li><strong>${c.term}:</strong> ${c.definition}</li>`).join('');
     const outlineHtml = (notes?.outline || []).map(o => `<li>${o}</li>`).join('');
@@ -317,13 +336,20 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       </html>
     `;
 
-    const blob = new Blob(['\ufeff' + content], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.doc`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile('\ufeff' + content, 'application/msword', 'doc');
+  };
+
+  const exportToMarkdown = () => {
+    downloadFile(buildMarkdownExport(note), 'text/markdown;charset=utf-8', 'md');
+  };
+
+  const exportToAnkiCsv = () => {
+    const csv = buildAnkiCsvExport(note);
+    if (!csv) {
+      setActionError('No terms or quiz cards to export.');
+      return;
+    }
+    downloadFile('\ufeff' + csv, 'text/csv;charset=utf-8', 'csv');
   };
 
   const exportToPDF = () => {
@@ -344,6 +370,15 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
     ]
       .filter(Boolean)
       .join('\n');
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title, text: sharePayload, url: shareUrl });
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+      }
+    }
 
     try {
       await navigator.clipboard.writeText(sharePayload);
@@ -586,34 +621,59 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               <button
                 onClick={exportToWord}
                 style={{
-                  padding: '0.45rem 0.8rem',
+                  padding: '0.45rem 0.7rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--bg-surface-elevated)',
                   border: '1px solid var(--border-subtle)',
                   fontSize: '0.8rem',
                   fontWeight: 500,
-                  color: 'var(--text-main)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem'
+                  color: 'var(--text-main)'
                 }}
               >
                 Word
               </button>
 
               <button
-                onClick={exportToPDF}
+                onClick={exportToMarkdown}
                 style={{
-                  padding: '0.45rem 0.8rem',
+                  padding: '0.45rem 0.7rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: 'var(--bg-surface-elevated)',
                   border: '1px solid var(--border-subtle)',
                   fontSize: '0.8rem',
                   fontWeight: 500,
-                  color: 'var(--text-main)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem'
+                  color: 'var(--text-main)'
+                }}
+              >
+                MD
+              </button>
+
+              <button
+                onClick={exportToAnkiCsv}
+                title="Export flashcards as Anki / Quizlet CSV"
+                style={{
+                  padding: '0.45rem 0.7rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  color: 'var(--text-main)'
+                }}
+              >
+                Anki
+              </button>
+
+              <button
+                onClick={exportToPDF}
+                style={{
+                  padding: '0.45rem 0.7rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  fontWeight: 500,
+                  color: 'var(--text-main)'
                 }}
               >
                 PDF
@@ -622,16 +682,13 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               <button
                 onClick={shareLink}
                 style={{
-                  padding: '0.45rem 0.8rem',
+                  padding: '0.45rem 0.75rem',
                   borderRadius: 'var(--radius-sm)',
                   backgroundColor: copiedShare ? 'var(--success)' : 'var(--bg-surface-elevated)',
                   color: copiedShare ? '#fff' : 'var(--text-main)',
                   border: '1px solid var(--border-subtle)',
                   fontSize: '0.8rem',
-                  fontWeight: 500,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem'
+                  fontWeight: 500
                 }}
               >
                 {copiedShare ? 'Copied' : 'Share'}
@@ -766,6 +823,30 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
             src={audioUrl}
             style={{ width: '100%', height: '38px' }}
           />
+          {Array.isArray(note.bookmarks) && note.bookmarks.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', paddingTop: '0.25rem' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)' }}>Marks:</span>
+              {note.bookmarks.map((b, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => seekAudioTo(b.timeSeconds)}
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    padding: '0.18rem 0.5rem',
+                    borderRadius: '4px',
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--warning)',
+                    color: 'var(--warning)'
+                  }}
+                >
+                  {formatTimestamp(b.timeSeconds)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1126,7 +1207,36 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
               maxHeight: '280px',
               overflowY: 'auto'
             }}>
-              {transcript || 'No transcript available.'}
+              {Array.isArray(note.segments) && note.segments.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                  {note.segments.map((seg, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => seekAudioTo(seg.start)}
+                        disabled={!audioUrl}
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          color: audioUrl ? 'var(--primary)' : 'var(--text-muted)',
+                          backgroundColor: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '4px',
+                          padding: '0.1rem 0.4rem',
+                          flexShrink: 0,
+                          cursor: audioUrl ? 'pointer' : 'default'
+                        }}
+                      >
+                        {formatTimestamp(seg.start)}
+                      </button>
+                      <span>{seg.text}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                transcript || 'No transcript available.'
+              )}
             </div>
           )
         )}

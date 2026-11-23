@@ -3,45 +3,45 @@
 export default function RoadmapPanel({ onTryFeature }) {
   const features = [
     {
-      title: 'Audio & Text Capture',
+      title: 'Audio & PDF Capture',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Mic recording, audio file upload, and pasted text.',
+      desc: 'Mic recording with crash checkpoints, chunked large uploads, bookmarks, and PDF/DOCX/PPTX import.',
       action: () => onTryFeature('workspace')
     },
     {
       title: 'AI Note Compiler',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Builds summaries, terms, outlines, and quizzes with inline edits.',
+      desc: 'Builds summaries, terms, outlines, quizzes, and clickable timestamped transcripts.',
       action: () => onTryFeature('workspace')
     },
     {
-      title: 'Flashcards',
+      title: 'Course Exam Mode',
       badge: 'Active',
       color: 'var(--success)',
-      desc: '3D flip cards with keyboard shortcuts and mastery tracking.',
+      desc: '3D flashcards across a lecture or entire course with persistent mastery tracking.',
       action: () => onTryFeature('study')
     },
     {
       title: 'Lecture Assistant',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Transcript-grounded Q&A and practice prompts.',
+      desc: 'AI tutor grounded in a single lecture or full course transcripts.',
       action: () => onTryFeature('study')
     },
     {
       title: 'Cloud Sync',
       badge: 'Synced',
       color: 'var(--primary)',
-      desc: 'Supabase sync, search, pinning, and offline local fallback.',
+      desc: 'Supabase sync, guest-note merge on sign-in, auto-reconnect upload, search, and pins.',
       action: () => onTryFeature('workspace')
     },
     {
       title: 'PWA & Export',
       badge: 'Active',
       color: 'var(--success)',
-      desc: 'Screen-off recording, Word (.doc), PDF, and link sharing.',
+      desc: 'Screen-off mode, native share, Word, Markdown, Anki CSV, and PDF.',
       action: () => onTryFeature('workspace')
     }
   ];
