@@ -276,7 +276,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
   };
 
   // Shared AI note synthesis helper that surfaces API error details
-  const synthesizeNotes = async (transcriptText, effectiveTitle, subjectOverride) => {
+  const synthesizeNotes = async (transcriptText, effectiveTitle, subjectOverride, segments = []) => {
     const targetSubject = subjectOverride || resolvedSubject;
     try {
       const analyzeRes = await fetch('/api/analyze', {
@@ -284,6 +284,7 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: transcriptText,
+          segments,
           title: effectiveTitle,
           subject: targetSubject
         })
@@ -398,7 +399,12 @@ export default function Recorder({ onSaveNote, initialLanguage = 'en', resetSign
     let analysisError = '';
     if (!pendingSync) {
       setStatusMessage('Generating notes...');
-      const result = await synthesizeNotes(finalTranscript, effectiveTitle, effectiveSubject);
+      const result = await synthesizeNotes(
+        finalTranscript,
+        effectiveTitle,
+        effectiveSubject,
+        transcriptSegments
+      );
       notesData = result.notesData;
       analysisError = result.error;
     } else {

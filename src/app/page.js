@@ -345,6 +345,7 @@ export default function Home() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 transcript: finalTranscript,
+                segments: finalSegments,
                 title: item.title,
                 subject: item.tag
               })

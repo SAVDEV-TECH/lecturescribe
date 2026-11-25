@@ -2,6 +2,60 @@
 
 import { formatTimestamp } from './audioUtils.js';
 
+const VALID_SPEAKERS = new Set(['lecturer', 'student']);
+const VALID_CATEGORIES = new Set(['lecture', 'aside', 'logistics']);
+
+export function normalizeTranscriptSegments(segments = []) {
+  if (!Array.isArray(segments)) return [];
+  return segments
+    .filter((seg) => seg && String(seg.text || '').trim().length > 0)
+    .map((seg) => {
+      const startNum = typeof seg.start === 'number' && Number.isFinite(seg.start) ? seg.start : null;
+      const endNum = typeof seg.end === 'number' && Number.isFinite(seg.end) ? seg.end : null;
+      const rawSpeaker = String(seg.speaker || '').toLowerCase();
+      const rawCategory = String(seg.category || '').toLowerCase();
+      return {
+        start: startNum,
+        end: endNum,
+        text: String(seg.text || '').trim(),
+        speaker: VALID_SPEAKERS.has(rawSpeaker) ? rawSpeaker : 'lecturer',
+        category: VALID_CATEGORIES.has(rawCategory) ? rawCategory : 'lecture'
+      };
+    });
+}
+
+/**
+ * Formats transcript segments for note synthesis, omitting non-educational banter ("aside")
+ * and explicitly distinguishing student questions/guesses from lecturer explanations.
+ */
+export function buildStudyTranscriptFromSegments(segments = [], fallbackTranscript = '') {
+  const normalized = normalizeTranscriptSegments(segments);
+  const fallback = String(fallbackTranscript || '').trim();
+  if (normalized.length === 0) {
+    return fallback;
+  }
+
+  const substantive = normalized.filter((seg) => seg.category !== 'aside');
+  const activeList = substantive.length > 0 ? substantive : normalized;
+  const hasStudent = activeList.some((seg) => seg.speaker === 'student');
+
+  return activeList
+    .map((seg) => {
+      const tags = [];
+      if (hasStudent || seg.speaker === 'student') {
+        tags.push(seg.speaker === 'student' ? 'Student' : 'Lecturer');
+      }
+      if (seg.category === 'logistics') {
+        tags.push('Logistics');
+      } else if (seg.category === 'aside') {
+        tags.push('Aside');
+      }
+      return tags.length > 0 ? `[${tags.join(' · ')}]: ${seg.text}` : seg.text;
+    })
+    .join('\n')
+    .trim() || fallback;
+}
+
 /**
  * Unpacks UI/study metadata stored inside notes_json._meta so existing
  * Supabase rows require zero SQL schema changes.
@@ -14,7 +68,7 @@ export function unpackSupabaseNote(row) {
     title: row.title,
     tag: row.tag,
     starred: Boolean(meta.starred),
-    segments: Array.isArray(meta.segments) ? meta.segments : [],
+    segments: Array.isArray(meta.segments) ? normalizeTranscriptSegments(meta.segments) : [],
     bookmarks: Array.isArray(meta.bookmarks) ? meta.bookmarks : [],
     masteredIndices: Array.isArray(meta.masteredIndices) ? meta.masteredIndices : [],
     language: meta.language || 'en',
@@ -36,7 +90,7 @@ export function packNotesJsonForSupabase(note) {
   const baseNotes = { ...(note.notes || {}) };
   baseNotes._meta = {
     starred: Boolean(note.starred),
-    segments: Array.isArray(note.segments) ? note.segments : [],
+    segments: Array.isArray(note.segments) ? normalizeTranscriptSegments(note.segments) : [],
     bookmarks: Array.isArray(note.bookmarks) ? note.bookmarks : [],
     masteredIndices: Array.isArray(note.masteredIndices) ? note.masteredIndices : [],
     language: note.language || 'en',
@@ -80,7 +134,26 @@ export function buildMarkdownExport(note) {
     });
   }
 
-  lines.push('', '## Transcript', note.transcript || '');
+  const normalizedSegments = normalizeTranscriptSegments(note.segments);
+  if (normalizedSegments.length > 0) {
+    const hasStudent = normalizedSegments.some((seg) => seg.speaker === 'student');
+    const transcriptLines = normalizedSegments.map((seg) => {
+      const timePrefix = typeof seg.start === 'number' ? `[${formatTimestamp(seg.start)}] ` : '';
+      const speakerLabel = hasStudent || seg.speaker === 'student'
+        ? `${seg.speaker === 'student' ? 'Student' : 'Lecturer'}: `
+        : '';
+      if (seg.category === 'aside') {
+        return `*${timePrefix}Aside — ${speakerLabel}${seg.text}*`;
+      }
+      if (seg.category === 'logistics') {
+        return `> ${timePrefix}**Logistics — ${speakerLabel}**${seg.text}`;
+      }
+      return speakerLabel ? `${timePrefix}**${speakerLabel}**${seg.text}` : `${timePrefix}${seg.text}`;
+    });
+    lines.push('', '## Transcript', ...transcriptLines);
+  } else {
+    lines.push('', '## Transcript', note.transcript || '');
+  }
   return lines.join('\n');
 }
 

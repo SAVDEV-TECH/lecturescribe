@@ -280,9 +280,14 @@ export async function polishTranscript({
           i * CLEANUP_SEGMENT_BATCH_SIZE,
           (i + 1) * CLEANUP_SEGMENT_BATCH_SIZE
         );
+        const lastCleaned = cleanedSegments[cleanedSegments.length - 1];
+        const previousContext = lastCleaned
+          ? `${lastCleaned.speaker === 'student' ? 'Student' : 'Lecturer'}: ${lastCleaned.text}`
+          : '';
         try {
           const data = await postCleanupRequest({
             segments: batch,
+            previousContext,
             title,
             subject,
             language
@@ -311,6 +316,7 @@ export async function polishTranscript({
 
     const chunks = splitTextForCleanup(rawText);
     const cleanedParts = [];
+    const untimedSegments = [];
 
     for (let i = 0; i < chunks.length; i++) {
       onProgress?.(
@@ -318,24 +324,48 @@ export async function polishTranscript({
           ? `Polishing wording (${i + 1}/${chunks.length})...`
           : 'Polishing wording...'
       );
+      const lastChunk = untimedSegments[untimedSegments.length - 1];
+      const previousContext = lastChunk
+        ? `${lastChunk.speaker === 'student' ? 'Student' : 'Lecturer'}: ${lastChunk.text}`
+        : '';
       try {
         const data = await postCleanupRequest({
           text: chunks[i],
           segments: [],
+          previousContext,
           title,
           subject,
           language
         });
-        cleanedParts.push(String(data?.cleanedText || chunks[i]).trim());
+        const pieceText = String(data?.cleanedText || chunks[i]).trim();
+        cleanedParts.push(pieceText);
+        if (Array.isArray(data?.segments) && data.segments.length > 0) {
+          untimedSegments.push(...data.segments);
+        } else if (pieceText) {
+          untimedSegments.push({
+            start: null,
+            end: null,
+            text: pieceText,
+            speaker: 'lecturer',
+            category: 'lecture'
+          });
+        }
       } catch {
         cleanedParts.push(chunks[i]);
+        untimedSegments.push({
+          start: null,
+          end: null,
+          text: chunks[i],
+          speaker: 'lecturer',
+          category: 'lecture'
+        });
       }
     }
 
     const cleanedText = cleanedParts.filter(Boolean).join(' ').trim();
     return {
       cleanedText: cleanedText || rawText,
-      cleanedSegments: safeSegments
+      cleanedSegments: untimedSegments.length > 0 ? untimedSegments : safeSegments
     };
   } catch {
     return {

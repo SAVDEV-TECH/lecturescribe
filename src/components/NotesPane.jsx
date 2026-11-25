@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { getAudioForNote, saveAudioForNote } from '@/lib/audioStorage';
 import { transcribeAudioWithChunking, polishTranscript, formatTimestamp } from '@/lib/audioUtils';
-import { buildMarkdownExport, buildAnkiCsvExport } from '@/lib/noteMeta';
+import { buildMarkdownExport, buildAnkiCsvExport, normalizeTranscriptSegments } from '@/lib/noteMeta';
 
 function buildMultipleChoiceQuestion(q, idx, allQuestions = [], allConcepts = []) {
   if (Array.isArray(q.options) && q.options.length >= 2 && typeof q.correctIndex === 'number') {
@@ -45,6 +45,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
   const [trackedNoteId, setTrackedNoteId] = useState(note?.id);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [showRawTranscript, setShowRawTranscript] = useState(false);
+  const [hideAsides, setHideAsides] = useState(false);
   const [isPolishing, setIsPolishing] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -74,6 +75,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
   if (note?.id !== trackedNoteId) {
     setTrackedNoteId(note?.id);
     setShowRawTranscript(false);
+    setHideAsides(false);
     setIsPolishing(false);
     setIsEditing(false);
     setIsRecompiling(false);
@@ -189,6 +191,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: freshTranscript,
+          segments: finalSegments,
           title,
           subject: tag
         })
@@ -292,6 +295,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: activeTranscript,
+          segments: isEditing ? [] : normalizeTranscriptSegments(note?.segments),
           title: activeTitle,
           subject: activeSubject
         })
@@ -355,6 +359,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       onUpdateNote(updated);
       setEditTranscript(resolvedText);
       setShowRawTranscript(false);
+      setHideAsides(false);
     } catch (err) {
       console.warn('Polish transcript error:', err);
       setActionError(err?.message || 'Could not polish transcript.');
@@ -376,6 +381,25 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
   const exportToWord = () => {
     const conceptsHtml = (notes?.keyConcepts || []).map(c => `<li><strong>${c.term}:</strong> ${c.definition}</li>`).join('');
     const outlineHtml = (notes?.outline || []).map(o => `<li>${o}</li>`).join('');
+    const wordSegments = normalizeTranscriptSegments(note?.segments);
+    const hasStudentSpeaker = wordSegments.some(s => s.speaker === 'student');
+    const transcriptHtml = wordSegments.length > 0
+      ? wordSegments
+          .map((s) => {
+            const timeStr = typeof s.start === 'number' ? `[${formatTimestamp(s.start)}] ` : '';
+            const roleStr = hasStudentSpeaker || s.speaker === 'student'
+              ? `<strong>${s.speaker === 'student' ? 'Student' : 'Lecturer'}:</strong> `
+              : '';
+            if (s.category === 'aside') {
+              return `<p style="color:#64748b;font-style:italic;">${timeStr}<em>[Aside] ${roleStr}${s.text}</em></p>`;
+            }
+            if (s.category === 'logistics') {
+              return `<p><strong>[Note]</strong> ${timeStr}${roleStr}${s.text}</p>`;
+            }
+            return `<p>${timeStr}${roleStr}${s.text}</p>`;
+          })
+          .join('')
+      : `<p>${transcript}</p>`;
 
     const content = `
       <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
@@ -391,7 +415,7 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
         <h2>Outline</h2>
         <ol>${outlineHtml}</ol>
         <h2>Transcript</h2>
-        <p>${transcript}</p>
+        ${transcriptHtml}
       </body>
       </html>
     `;
@@ -1219,160 +1243,295 @@ export default function NotesPane({ note, onUpdateNote, onDeleteNote, onToggleSt
       })()}
 
       {/* Full Transcript Toggle */}
-      <section style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <button
-            onClick={() => setShowFullTranscript(!showFullTranscript)}
-            style={{
-              fontSize: '0.8rem',
-              color: 'var(--primary)',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem'
-            }}
-          >
-            {showFullTranscript ? 'Hide Transcript' : 'Show Transcript'}
-          </button>
+      {(() => {
+        const displaySegments = normalizeTranscriptSegments(note?.segments);
+        const hasStudentTurns = displaySegments.some((s) => s.speaker === 'student');
+        const hasAsides = displaySegments.some((s) => s.category === 'aside');
+        const hasStructuredFormatting = hasStudentTurns || hasAsides;
+        const visibleSegments = hideAsides
+          ? displaySegments.filter((s) => s.category !== 'aside')
+          : displaySegments;
 
-          {showFullTranscript && !isEditing && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              {note.rawTranscript && note.rawTranscript !== transcript ? (
-                <div
-                  style={{
-                    display: 'inline-flex',
-                    borderRadius: 'var(--radius-full)',
-                    border: '1px solid var(--border-subtle)',
-                    backgroundColor: 'var(--bg-surface)',
-                    padding: '2px',
-                    gap: '2px'
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setShowRawTranscript(false)}
-                    style={{
-                      fontSize: '0.7rem',
-                      fontWeight: 600,
-                      padding: '0.15rem 0.55rem',
-                      borderRadius: 'var(--radius-full)',
-                      backgroundColor: !showRawTranscript ? 'var(--primary)' : 'transparent',
-                      color: !showRawTranscript ? '#fff' : 'var(--text-secondary)'
-                    }}
-                  >
-                    Clean
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowRawTranscript(true)}
-                    style={{
-                      fontSize: '0.7rem',
-                      fontWeight: 600,
-                      padding: '0.15rem 0.55rem',
-                      borderRadius: 'var(--radius-full)',
-                      backgroundColor: showRawTranscript ? 'var(--primary)' : 'transparent',
-                      color: showRawTranscript ? '#fff' : 'var(--text-secondary)'
-                    }}
-                  >
-                    Raw
-                  </button>
-                </div>
-              ) : (
-                !note.rawTranscript &&
-                transcript &&
-                !note.pendingSync &&
-                onUpdateNote && (
-                  <button
-                    type="button"
-                    onClick={handlePolishTranscript}
-                    disabled={isPolishing || isRecompiling}
-                    style={{
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      padding: '0.2rem 0.6rem',
-                      borderRadius: 'var(--radius-full)',
-                      border: '1px solid var(--border-subtle)',
-                      backgroundColor: 'var(--bg-surface)',
-                      color: 'var(--primary)'
-                    }}
-                  >
-                    {isPolishing ? 'Polishing...' : 'Polish'}
-                  </button>
-                )
-              )}
-            </div>
-          )}
-        </div>
+        return (
+          <section style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <button
+                onClick={() => setShowFullTranscript(!showFullTranscript)}
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--primary)',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem'
+                }}
+              >
+                {showFullTranscript ? 'Hide Transcript' : 'Show Transcript'}
+              </button>
 
-        {showFullTranscript && (
-          isEditing ? (
-            <textarea
-              value={editTranscript}
-              onChange={(e) => setEditTranscript(e.target.value)}
-              rows={7}
-              style={{
-                marginTop: '0.75rem',
-                width: '100%',
-                padding: '0.85rem',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--bg-input)',
-                border: '1px solid var(--border-strong)',
-                fontSize: '0.82rem',
-                lineHeight: 1.7,
-                color: 'var(--text-main)',
-                outline: 'none',
-                resize: 'vertical'
-              }}
-            />
-          ) : (
-            <div style={{
-              marginTop: '0.75rem',
-              padding: '1rem',
-              borderRadius: 'var(--radius-sm)',
-              backgroundColor: 'var(--bg-app)',
-              border: '1px solid var(--border-subtle)',
-              fontSize: '0.82rem',
-              lineHeight: 1.7,
-              color: 'var(--text-secondary)',
-              maxHeight: '280px',
-              overflowY: 'auto'
-            }}>
-              {showRawTranscript && note.rawTranscript ? (
-                note.rawTranscript
-              ) : Array.isArray(note.segments) && note.segments.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-                  {note.segments.map((seg, idx) => (
-                    <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+              {showFullTranscript && !isEditing && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {hasAsides && !showRawTranscript && (
+                    <button
+                      type="button"
+                      onClick={() => setHideAsides(!hideAsides)}
+                      style={{
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        padding: '0.18rem 0.55rem',
+                        borderRadius: 'var(--radius-full)',
+                        border: '1px solid var(--border-subtle)',
+                        backgroundColor: hideAsides ? 'rgba(99, 102, 241, 0.14)' : 'var(--bg-surface)',
+                        color: hideAsides ? 'var(--primary)' : 'var(--text-secondary)'
+                      }}
+                    >
+                      {hideAsides ? 'Show Asides' : 'Hide Asides'}
+                    </button>
+                  )}
+
+                  {note.rawTranscript && (note.rawTranscript !== transcript || hasStructuredFormatting) ? (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        borderRadius: 'var(--radius-full)',
+                        border: '1px solid var(--border-subtle)',
+                        backgroundColor: 'var(--bg-surface)',
+                        padding: '2px',
+                        gap: '2px'
+                      }}
+                    >
                       <button
                         type="button"
-                        onClick={() => seekAudioTo(seg.start)}
-                        disabled={!audioUrl}
+                        onClick={() => setShowRawTranscript(false)}
                         style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: '0.72rem',
+                          fontSize: '0.7rem',
                           fontWeight: 600,
-                          color: audioUrl ? 'var(--primary)' : 'var(--text-muted)',
-                          backgroundColor: 'var(--bg-surface)',
-                          border: '1px solid var(--border-subtle)',
-                          borderRadius: '4px',
-                          padding: '0.1rem 0.4rem',
-                          flexShrink: 0,
-                          cursor: audioUrl ? 'pointer' : 'default'
+                          padding: '0.15rem 0.55rem',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: !showRawTranscript ? 'var(--primary)' : 'transparent',
+                          color: !showRawTranscript ? '#fff' : 'var(--text-secondary)'
                         }}
                       >
-                        {formatTimestamp(seg.start)}
+                        Clean
                       </button>
-                      <span>{seg.text}</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowRawTranscript(true)}
+                        style={{
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          padding: '0.15rem 0.55rem',
+                          borderRadius: 'var(--radius-full)',
+                          backgroundColor: showRawTranscript ? 'var(--primary)' : 'transparent',
+                          color: showRawTranscript ? '#fff' : 'var(--text-secondary)'
+                        }}
+                      >
+                        Raw
+                      </button>
                     </div>
-                  ))}
+                  ) : (
+                    !note.rawTranscript &&
+                    transcript &&
+                    !note.pendingSync &&
+                    onUpdateNote && (
+                      <button
+                        type="button"
+                        onClick={handlePolishTranscript}
+                        disabled={isPolishing || isRecompiling}
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          padding: '0.2rem 0.6rem',
+                          borderRadius: 'var(--radius-full)',
+                          border: '1px solid var(--border-subtle)',
+                          backgroundColor: 'var(--bg-surface)',
+                          color: 'var(--primary)'
+                        }}
+                      >
+                        {isPolishing ? 'Polishing...' : 'Polish'}
+                      </button>
+                    )
+                  )}
                 </div>
-              ) : (
-                transcript || 'No transcript available.'
               )}
             </div>
-          )
-        )}
-      </section>
+
+            {showFullTranscript && (
+              isEditing ? (
+                <textarea
+                  value={editTranscript}
+                  onChange={(e) => setEditTranscript(e.target.value)}
+                  rows={7}
+                  style={{
+                    marginTop: '0.75rem',
+                    width: '100%',
+                    padding: '0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border-strong)',
+                    fontSize: '0.82rem',
+                    lineHeight: 1.7,
+                    color: 'var(--text-main)',
+                    outline: 'none',
+                    resize: 'vertical'
+                  }}
+                />
+              ) : (
+                <div style={{
+                  marginTop: '0.75rem',
+                  padding: '1rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-app)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: '0.82rem',
+                  lineHeight: 1.7,
+                  color: 'var(--text-secondary)',
+                  maxHeight: '300px',
+                  overflowY: 'auto'
+                }}>
+                  {showRawTranscript && note.rawTranscript ? (
+                    note.rawTranscript
+                  ) : displaySegments.length > 0 ? (
+                    visibleSegments.length === 0 ? (
+                      <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                        All lines marked as aside. Click Show Asides to view.
+                      </span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {visibleSegments.map((seg, idx) => {
+                          const isAside = seg.category === 'aside';
+                          const isLogistics = seg.category === 'logistics';
+                          const isStudent = seg.speaker === 'student';
+                          const showRole = hasStudentTurns || isStudent;
+
+                          return (
+                            <div
+                              key={idx}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: '0.5rem',
+                                flexWrap: 'wrap',
+                                padding: isAside || isStudent ? '0.28rem 0.55rem' : '0.05rem 0',
+                                borderRadius: isAside || isStudent ? 'var(--radius-sm)' : 0,
+                                borderLeft: isAside
+                                  ? '2px solid var(--border-strong)'
+                                  : isStudent
+                                  ? '2px solid var(--primary)'
+                                  : 'none',
+                                backgroundColor: isAside
+                                  ? 'rgba(148, 163, 184, 0.08)'
+                                  : isStudent
+                                  ? 'rgba(99, 102, 241, 0.07)'
+                                  : 'transparent'
+                              }}
+                            >
+                              {typeof seg.start === 'number' && (
+                                <button
+                                  type="button"
+                                  onClick={() => seekAudioTo(seg.start)}
+                                  disabled={!audioUrl}
+                                  style={{
+                                    fontFamily: 'var(--font-mono)',
+                                    fontSize: '0.72rem',
+                                    fontWeight: 600,
+                                    color: audioUrl ? 'var(--primary)' : 'var(--text-muted)',
+                                    backgroundColor: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: '4px',
+                                    padding: '0.1rem 0.4rem',
+                                    flexShrink: 0,
+                                    cursor: audioUrl ? 'pointer' : 'default'
+                                  }}
+                                >
+                                  {formatTimestamp(seg.start)}
+                                </button>
+                              )}
+
+                              {showRole && (
+                                <span
+                                  style={{
+                                    fontSize: '0.66rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em',
+                                    padding: '0.12rem 0.42rem',
+                                    borderRadius: '4px',
+                                    flexShrink: 0,
+                                    backgroundColor: isStudent
+                                      ? 'rgba(99, 102, 241, 0.16)'
+                                      : 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
+                                    color: isStudent ? 'var(--primary)' : 'var(--text-secondary)'
+                                  }}
+                                >
+                                  {isStudent ? 'Student' : 'Lecturer'}
+                                </span>
+                              )}
+
+                              {isAside && (
+                                <span
+                                  style={{
+                                    fontSize: '0.66rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em',
+                                    padding: '0.12rem 0.42rem',
+                                    borderRadius: '4px',
+                                    flexShrink: 0,
+                                    backgroundColor: 'var(--bg-surface)',
+                                    border: '1px solid var(--border-subtle)',
+                                    color: 'var(--text-muted)',
+                                    fontStyle: 'italic'
+                                  }}
+                                >
+                                  Aside
+                                </span>
+                              )}
+
+                              {isLogistics && (
+                                <span
+                                  style={{
+                                    fontSize: '0.66rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em',
+                                    padding: '0.12rem 0.42rem',
+                                    borderRadius: '4px',
+                                    flexShrink: 0,
+                                    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+                                    border: '1px solid var(--warning)',
+                                    color: 'var(--warning)'
+                                  }}
+                                >
+                                  Note
+                                </span>
+                              )}
+
+                              <span
+                                style={{
+                                  flex: 1,
+                                  minWidth: '180px',
+                                  fontStyle: isAside ? 'italic' : 'normal',
+                                  color: isAside ? 'var(--text-muted)' : 'var(--text-secondary)'
+                                }}
+                              >
+                                {seg.text}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  ) : (
+                    transcript || 'No transcript available.'
+                  )}
+                </div>
+              )
+            )}
+          </section>
+        );
+      })()}
     </div>
   );
 }

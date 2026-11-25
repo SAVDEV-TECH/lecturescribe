@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lecturescribe-pwa-v5';
+const CACHE_NAME = 'lecturescribe-pwa-v6';
 const AUDIO_DB_NAME = 'LectureScribeAudioDB';
 const AUDIO_DB_VERSION = 2;
 const AUDIO_STORE = 'lecture_audio';
